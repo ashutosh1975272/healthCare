@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db
 from app.models.user import User
-from app.schemas.learn import BodyTestPage, LearnCategoryOut, LearnItemPage, LearnSearchResult, TestBodyPartOut
+from app.schemas.learn import BodyTestPage, LearnCategoryOut, LearnItemOut, LearnItemPage, LearnSearchResult, TestBodyPartOut
 from app.services.learn_service import learn_service
 
 router = APIRouter(prefix="/learn", tags=["learn"])
