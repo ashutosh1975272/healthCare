@@ -246,4 +246,13 @@ async def entrypoint(ctx: JobContext):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    # Render's small instance can report a high baseline CPU load while the
+    # model plugins are warming up. Keep one worker process and allow a single
+    # active call instead of advertising the agent as unavailable at startup.
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            num_idle_processes=0,
+            load_threshold=1.0,
+        )
+    )
