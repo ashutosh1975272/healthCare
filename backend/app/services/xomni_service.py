@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.gateway import LLMGateway
 from app.ai import guardrails, triage
+from app.ai.chat_context import build_chat_context
 from app.models.xomni import XomniConversation, XomniMessage
 from app.models.learn import LearnCategory, LearnItem  # type: ignore[attr-defined]
 
@@ -67,6 +68,10 @@ You are Xomni, a smart health and wellness AI assistant. You help users with:
 - Timetable and productivity management
 - Fitness guidance and activity tracking
 - BMI calculation and dietary planning
+
+When a user shares a durable preference, habit, goal, dislike, dietary restriction, or communication preference that would improve future advice, do not save it silently. Ask for confirmation and emit:
+{"action": "propose_personal_context", "updates": {"likes": ["..."], "dislikes": ["..."], "habits": ["..."], "goals": ["..."], "dietary_restrictions": ["..."]}}
+Only include categories supported by the user's statement. Never store a medical diagnosis or sensitive fact as a preference without explicit confirmation.
 
 Be conversational, helpful, and always recommend professional medical advice for medical issues.
 """
@@ -322,6 +327,23 @@ async def apply_pending_action(
         db.add(activity)
         await db.flush()
         result["affected"].append({"type": "fitness_activity", "id": str(activity.id), "logged_date": logged_date.isoformat()})
+    elif action_name == "propose_personal_context":
+        from app.models.rag_context import UserPersonalContext
+
+        allowed = {"habits", "likes", "dislikes", "goals", "dietary_restrictions", "communication_preferences"}
+        updates = action.get("updates")
+        if not isinstance(updates, dict) or not updates or set(updates) - allowed:
+            raise ValueError("The proposed personal context is invalid.")
+        row = await db.scalar(select(UserPersonalContext).where(UserPersonalContext.user_id == user_id))
+        if row is None:
+            row = UserPersonalContext(user_id=user_id, family_id=family_id, context_json=updates, source="XOMNI_CONFIRMED")
+            db.add(row)
+        else:
+            row.context_json = {**(row.context_json or {}), **updates}
+            row.family_id = family_id
+            row.source = "XOMNI_CONFIRMED"
+        await db.flush()
+        result["affected"].append({"type": "personal_context", "id": str(row.id), "fields": sorted(updates)})
     else:
         raise ValueError("This Xomni action cannot be confirmed yet.")
 
@@ -391,6 +413,9 @@ async def chat(
     conversation_id: uuid.UUID | None = None,
     user_prompt_prefix: str | None = None,
     nutrition_context: dict | None = None,
+    family_id: uuid.UUID | None = None,
+    member_id: uuid.UUID | None = None,
+    document_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """
     Main Xomni chat function.
@@ -429,16 +454,18 @@ async def chat(
     # Get conversation history for context
     history = await _get_conversation_history(db, conv.id, limit=6)
 
-    # Get learn context (RAG over food/test DB)
-    learn_context = await _get_learn_context(db, message)
+    # Retrieve global Learn knowledge, confirmed personal context, and scoped reports.
+    retrieved = await build_chat_context(
+        db,
+        user_id=user_id,
+        family_id=family_id,
+        question=message,
+        member_id=member_id,
+        document_id=document_id,
+    )
 
     # Pick system prompt by mode
-    if mode == "food":
-        system_prompt = FOOD_SYSTEM_PROMPT
-    elif mode == "timetable":
-        system_prompt = TIMETABLE_SYSTEM_PROMPT
-    else:
-        system_prompt = GENERAL_SYSTEM_PROMPT
+    system_prompt = _get_mode_system_prompt(mode)
 
     # Inject user restrictions if set
     if conv.user_prompt_prefix:
@@ -464,7 +491,8 @@ User's nutrition profile:
 
     full_prompt = f"""{system_prompt}
 
-{learn_context}
+Retrieved context (cite the source labels when you use it):
+{retrieved.text}
 
 {nutrition_text}
 
@@ -495,7 +523,7 @@ XOMNI:"""
 
     # Detect and persist actions so confirmation is server-owned and resumable.
     action = None
-    if mode in ["timetable", "food", "general"]:
+    if mode in ["timetable", "food", "general", "fitness", "reports"]:
         answer_text, action = _extract_action(answer_text)
         if action:
             conv.pending_action = {"action": action}
@@ -520,7 +548,7 @@ XOMNI:"""
         "answer": answer_text,
         "conversation_id": str(conv.id),
         "message_id": str(ai_msg.id),
-        "citations": [],
+        "citations": retrieved.citations,
         "emergency": False,
         "action": action,
     }

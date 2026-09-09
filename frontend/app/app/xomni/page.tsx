@@ -12,7 +12,7 @@ import {
 import { apiClient, getAccessToken, setAccessToken } from "@/lib/auth-client";
 import { VoiceTalkButton } from "@/components/app/voice-talk-button";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Radio } from "lucide-react";
 
@@ -27,6 +27,7 @@ interface Message {
   createdAt: Date;
   streaming?: boolean;
   action?: any;
+  citations?: Array<{ source: string; label: string; page?: number }>;
 }
 
 interface Conversation {
@@ -92,15 +93,16 @@ function ProposalCard({ action, onAccept, onReject }: { action: any, onAccept: (
   const isMealPlan = action.action === "propose_meal_plan";
   const isTodo = action.action === "propose_todo";
   const isFitness = action.action === "propose_fitness_activity";
+  const isPersonalContext = action.action === "propose_personal_context";
 
-  if (!isMealPlan && !isTodo && !isFitness) return null;
+  if (!isMealPlan && !isTodo && !isFitness && !isPersonalContext) return null;
 
   return (
     <div className="mt-4 border border-primary/20 bg-primary-soft/30 rounded-xl p-4 shadow-sm w-full max-w-sm">
       <div className="flex items-center gap-2 mb-3">
         <Sparkles className="h-4 w-4 text-primary" />
         <h4 className="text-sm font-semibold text-ink">
-          {isMealPlan ? "Meal Plan Update Proposed" : isFitness ? "Workout Log Proposed" : "Schedule Update Proposed"}
+          {isMealPlan ? "Meal Plan Update Proposed" : isFitness ? "Workout Log Proposed" : isPersonalContext ? "Personal Preference Proposed" : "Schedule Update Proposed"}
         </h4>
       </div>
 
@@ -122,6 +124,9 @@ function ProposalCard({ action, onAccept, onReject }: { action: any, onAccept: (
             <p className="text-muted text-xs mt-1">{action.duration_minutes} minutes{action.calories_burned ? ` · ${action.calories_burned} kcal` : ""}</p>
           </div>
         )}
+        {isPersonalContext && (
+          <pre className="whitespace-pre-wrap font-sans text-xs">{JSON.stringify(action.updates || {}, null, 2)}</pre>
+        )}
       </div>
 
       <div className="flex gap-2">
@@ -138,6 +143,9 @@ function ProposalCard({ action, onAccept, onReject }: { action: any, onAccept: (
 
 export default function XomniPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const contextMemberId = searchParams.get("member_id");
+  const contextDocumentId = searchParams.get("document_id");
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
@@ -171,6 +179,11 @@ export default function XomniPage() {
 
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    const requestedMode = searchParams.get("mode") as ChatMode | null;
+    if (requestedMode && requestedMode in MODE_META) setMode(requestedMode);
+  }, [searchParams]);
 
   const loadConversations = async () => {
     const token = getAccessToken();
@@ -242,6 +255,8 @@ export default function XomniPage() {
             message: content,
             mode,
             conversation_id: activeConvId,
+            member_id: contextMemberId || undefined,
+            document_id: contextDocumentId || undefined,
             stream: true,
           }),
         });
@@ -285,6 +300,9 @@ export default function XomniPage() {
                   if (payload.conversation_id && payload.conversation_id !== activeConvId) {
                     setActiveConvId(payload.conversation_id);
                   }
+                  if (payload.citations) {
+                    setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, citations: payload.citations } : m));
+                  }
                 } else {
                   if (payload.token) {
                     fullText += payload.token;
@@ -322,7 +340,7 @@ export default function XomniPage() {
         setLoading(false);
       }
     },
-    [loading, mode, activeConvId, ttsEnabled]
+    [loading, mode, activeConvId, contextMemberId, contextDocumentId, ttsEnabled]
   );
 
   // ── Voice recording ──────────────────────────────────────────────────────
@@ -540,6 +558,11 @@ export default function XomniPage() {
                 </div>
               )}
             </div>
+            {(contextMemberId || contextDocumentId) && (
+              <span className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-danger/10 px-2 py-1 text-[11px] font-medium text-danger">
+                <FileText className="h-3 w-3" /> Report context attached
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -636,6 +659,12 @@ export default function XomniPage() {
                                     <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(var(--primary),0.8)] animate-bounce" style={{ animationDelay: "150ms", animationDuration: "800ms" }} />
                                     <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(var(--primary),0.8)] animate-bounce" style={{ animationDelay: "300ms", animationDuration: "800ms" }} />
                                   </span>
+                                </div>
+                              )}
+                              {!message.streaming && message.citations && message.citations.length > 0 && (
+                                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line/40 pt-2 text-[10px] text-muted">
+                                  <span className="font-semibold">Sources:</span>
+                                  {message.citations.slice(0, 6).map((citation, index) => <span key={`${citation.source}-${citation.label}-${index}`} className="rounded-full bg-mist px-2 py-0.5">{citation.label}{citation.page ? ` · p.${citation.page}` : ""}</span>)}
                                 </div>
                               )}
                             </div>

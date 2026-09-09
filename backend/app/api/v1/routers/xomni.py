@@ -37,6 +37,8 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     user_prompt_prefix: str | None = None
     nutrition_context: dict | None = None
+    member_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = None
     stream: bool = True            # True = Groq SSE streaming
 
 
@@ -109,6 +111,9 @@ async def chat(
         conversation_id=conv_id,
         user_prompt_prefix=payload.user_prompt_prefix or current_user.ai_context,
         nutrition_context=payload.nutrition_context,
+        family_id=current_user.family_id,
+        member_id=payload.member_id,
+        document_id=payload.document_id,
     )
 
     if result.get("emergency"):
@@ -134,6 +139,7 @@ async def chat(
                 "conversation_id": conv_id_str,
                 "message_id": msg_id_str,
                 "action": action,
+                "citations": result.get("citations", []),
             })
             + "\n\n"
         ).encode()
