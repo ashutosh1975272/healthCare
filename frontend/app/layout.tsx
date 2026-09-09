@@ -112,6 +112,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-dvh bg-foam text-ink tabular">
         <ThemeProvider>
+          <a href="#main-content" className="sr-only fixed left-4 top-4 z-[100] rounded-md bg-ink px-4 py-2 text-sm font-semibold text-paper focus:not-sr-only">
+            Skip to main content
+          </a>
           <Script
             id="ld-json-organization"
             type="application/ld+json"
