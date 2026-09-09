@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -192,6 +193,37 @@ def _extract_action(answer_text: str) -> tuple[str, dict | None]:
             clean = (answer_text[:start] + answer_text[start + end:]).strip()
             return clean, candidate
         cursor = start + 1
+
+
+def _is_action_confirmation(message: str) -> bool:
+    """Recognize explicit confirmation replies across chat, voice, and Telegram."""
+    normalized = " ".join(re.sub(r"[^a-z0-9\s]", "", message.lower()).split())
+    return normalized in {
+        "yes", "y", "confirm", "confirmed", "approve", "approved",
+        "yes update", "yes add", "yes replace", "do it", "go ahead",
+    } or normalized.startswith(("yes ", "confirm ", "approve "))
+
+
+def _is_action_rejection(message: str) -> bool:
+    normalized = " ".join(re.sub(r"[^a-z0-9\s]", "", message.lower()).split())
+    return normalized in {
+        "no", "n", "reject", "rejected", "cancel", "cancelled", "don't",
+        "do not", "leave it", "leave it unchanged",
+    } or normalized.startswith(("no ", "reject ", "cancel "))
+
+
+def _action_confirmation_text(result: dict[str, Any]) -> str:
+    """Return a channel-neutral confirmation message after a committed action."""
+    types = {item.get("type") for item in result.get("affected", [])}
+    if "todo" in types:
+        return "Done. I updated your todo and timetable."
+    if "meal_plan" in types:
+        return "Done. I updated your food plan."
+    if "fitness_activity" in types:
+        return "Done. I updated your fitness activity."
+    if "personal_context" in types:
+        return "Done. I saved that preference for future recommendations."
+    return "Done. I applied the approved update."
 
 
 async def apply_pending_action(
@@ -450,6 +482,72 @@ async def chat(
     )
     db.add(user_msg)
     await db.flush()
+
+    # Keep confirmation behavior identical for website text, browser voice
+    # transcripts, and Telegram. The mutation still happens only after the
+    # explicit confirmation and is committed by the request transaction.
+    if family_id is not None and conv.pending_action:
+        if _is_action_confirmation(message):
+            try:
+                applied = await apply_pending_action(
+                    db,
+                    user_id=user_id,
+                    family_id=family_id,
+                    conversation_id=conv.id,
+                )
+                answer_text = _action_confirmation_text(applied)
+                db.add(XomniMessage(
+                    conversation_id=conv.id,
+                    role="assistant",
+                    content=answer_text,
+                    provider_used="system",
+                ))
+                await db.flush()
+                return {
+                    "answer": answer_text,
+                    "conversation_id": str(conv.id),
+                    "message_id": None,
+                    "citations": [],
+                    "emergency": False,
+                    "action": None,
+                    "applied": applied,
+                }
+            except ValueError as exc:
+                answer_text = str(exc)
+                db.add(XomniMessage(
+                    conversation_id=conv.id,
+                    role="assistant",
+                    content=answer_text,
+                    provider_used="system",
+                ))
+                await db.flush()
+                return {
+                    "answer": answer_text,
+                    "conversation_id": str(conv.id),
+                    "message_id": None,
+                    "citations": [],
+                    "emergency": False,
+                    "action": None,
+                }
+        if _is_action_rejection(message):
+            conv.pending_action = None
+            conv.pending_action_expires_at = None
+            answer_text = "Okay. I left your plan unchanged."
+            db.add(XomniMessage(
+                conversation_id=conv.id,
+                role="assistant",
+                content=answer_text,
+                provider_used="system",
+            ))
+            await db.flush()
+            return {
+                "answer": answer_text,
+                "conversation_id": str(conv.id),
+                "message_id": None,
+                "citations": [],
+                "emergency": False,
+                "action": None,
+            }
 
     # Get conversation history for context
     history = await _get_conversation_history(db, conv.id, limit=6)

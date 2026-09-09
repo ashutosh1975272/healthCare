@@ -686,6 +686,11 @@ export default function XomniPage() {
                                     body: JSON.stringify({ conversation_id: activeConvId }),
                                   });
                                   if (!response.ok) throw new Error((await response.text()) || "Could not apply proposal.");
+                                  await loadConversation(activeConvId);
+                                  await loadConversations();
+                                  window.dispatchEvent(new CustomEvent("aarogya:data-changed", {
+                                    detail: { source: "xomni", action: "confirmed" },
+                                  }));
                                   // Add a system response back to chat
                                   setMessages(prev => [...prev, {
                                     id: `${Date.now()}-sys`,
