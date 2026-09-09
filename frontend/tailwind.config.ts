@@ -32,6 +32,12 @@ const config: Config = {
         },
         muted: "var(--color-text-secondary)",
         critical: "var(--color-danger)",
+        "primary-soft": "var(--color-primary-soft)",
+        healthy: "var(--color-healthy)",
+        apricot: "var(--color-apricot)",
+        lime: "var(--color-lime)",
+        "lime-ink": "var(--color-lime-ink)",
+        blush: "var(--color-blush)",
         charcoal: {
           DEFAULT: "var(--color-surface-hover)",
           foreground: "var(--color-text-primary)",
