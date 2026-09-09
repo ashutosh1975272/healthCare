@@ -49,6 +49,7 @@ class ChatResponse(BaseModel):
     citations: list[dict] = []
     emergency: bool = False
     action: dict | None = None
+    applied: dict | None = None
 
 
 class ActionDecisionRequest(BaseModel):
@@ -139,6 +140,7 @@ async def chat(
                 "conversation_id": conv_id_str,
                 "message_id": msg_id_str,
                 "action": action,
+                "applied": result.get("applied"),
                 "citations": result.get("citations", []),
             })
             + "\n\n"

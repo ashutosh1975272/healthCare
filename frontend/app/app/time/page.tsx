@@ -137,6 +137,12 @@ export default function TimeManagementPage() {
   }, [load]);
 
   useEffect(() => {
+    const refresh = () => void load();
+    window.addEventListener("aarogya:data-changed", refresh);
+    return () => window.removeEventListener("aarogya:data-changed", refresh);
+  }, [load]);
+
+  useEffect(() => {
     if (!dayPlan) return;
     const current = dayPlan.blocks.find((b) => b.is_current && b.needs_checkin);
     if (current && !showCheckin) {

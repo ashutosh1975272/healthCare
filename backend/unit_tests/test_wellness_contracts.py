@@ -3,7 +3,11 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from app.services.xomni_service import _is_action_confirmation, _is_action_rejection
+from app.services.xomni_service import (
+    _extract_action,
+    _is_action_confirmation,
+    _is_action_rejection,
+)
 from app.schemas.time import TodoIn
 
 
@@ -31,3 +35,25 @@ def test_xomni_confirmation_phrases_are_channel_neutral() -> None:
     assert _is_action_confirmation("go ahead")
     assert _is_action_rejection("No, leave it unchanged")
     assert not _is_action_confirmation("maybe change the time")
+
+
+def test_xomni_action_contract_supports_update_without_accepting_unknown_ops() -> None:
+    text, action = _extract_action(
+        'I can change it after you confirm. '
+        '{"action":"update_todo","existing_title":"Walking",'
+        '"title":"Walking outside","start_hour":14,"end_hour":16}'
+    )
+    assert "Walking" not in text
+    assert action == {
+        "action": "update_todo",
+        "existing_title": "Walking",
+        "title": "Walking outside",
+        "start_hour": 14,
+        "end_hour": 16,
+    }
+
+    unchanged, unsupported = _extract_action(
+        'I cannot do that {"action":"run_arbitrary_code","value":"x"}'
+    )
+    assert unsupported is None
+    assert unchanged == 'I cannot do that {"action":"run_arbitrary_code","value":"x"}'

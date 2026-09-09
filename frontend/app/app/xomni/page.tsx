@@ -303,6 +303,11 @@ export default function XomniPage() {
                   if (payload.citations) {
                     setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, citations: payload.citations } : m));
                   }
+                  if (payload.applied) {
+                    window.dispatchEvent(new CustomEvent("aarogya:data-changed", {
+                      detail: { source: "xomni", action: "confirmed", applied: payload.applied },
+                    }));
+                  }
                 } else {
                   if (payload.token) {
                     fullText += payload.token;

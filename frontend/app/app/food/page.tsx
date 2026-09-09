@@ -117,6 +117,12 @@ export default function FoodPage() {
     void loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    const refresh = () => void loadData();
+    window.addEventListener("aarogya:data-changed", refresh);
+    return () => window.removeEventListener("aarogya:data-changed", refresh);
+  }, [loadData]);
+
   // Handle manual addition/save
   const handleSaveManualItem = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -85,10 +85,16 @@ Guidelines:
    - Respond with a JSON action block. Include recurrence_rule (once, daily, weekdays, or weekly) only when requested, and recurrence_until/recurrence_days when needed:
      {"action": "propose_todo", "title": "Evening Cardio", "start_hour": 17, "end_hour": 18, "priority": "important", "recurrence_rule": "once", "created_by": "XOMNI"}
 2. When users ask to complete or check off a task:
-   - Respond with: {"action": "complete_block", "title": "...", "start_hour": 10}
-3. When users ask about their 3 timetable templates (Productive Day, Backup Day, Holiday Day):
+   - Respond with: {"action": "complete_todo", "existing_title": "...", "due_date": "YYYY-MM-DD"}
+3. When users ask to change an existing task, never create a duplicate. Ask for permission first and emit:
+   {"action": "update_todo", "existing_title": "...", "existing_due_date": "YYYY-MM-DD", "title": "New title", "start_hour": 14, "end_hour": 16, "due_date": "YYYY-MM-DD", "priority": "normal"}
+   Include only fields the user asked to change. Use the exact existing title when it is known; if it is ambiguous, ask a clarification question instead of proposing an update.
+4. When users ask to remove a task, ask for permission first and emit:
+   {"action": "delete_todo", "existing_title": "...", "due_date": "YYYY-MM-DD"}
+   Never delete a task without the confirmation step.
+5. When users ask about their 3 timetable templates (Productive Day, Backup Day, Holiday Day):
    - Explain the structure of each template and how their daily adherence score is calculated.
-4. All tasks proposed by you will be tagged with `created_by: 'XOMNI'` so users always know AI proposed it, while tasks they create themselves are tagged as manual.
+6. All tasks proposed by you will be tagged with `created_by: 'XOMNI'` so users always know AI proposed it, while tasks they create themselves are tagged as manual.
 """
 
 
@@ -189,10 +195,82 @@ def _extract_action(answer_text: str) -> tuple[str, dict | None]:
         except _json.JSONDecodeError:
             cursor = start + 1
             continue
-        if isinstance(candidate, dict) and candidate.get("action"):
+        if isinstance(candidate, dict) and _normalize_action(candidate):
             clean = (answer_text[:start] + answer_text[start + end:]).strip()
-            return clean, candidate
+            return clean, _normalize_action(candidate)
         cursor = start + 1
+
+
+_SUPPORTED_ACTIONS = {
+    "propose_todo",
+    "update_todo",
+    "complete_todo",
+    "delete_todo",
+    "propose_meal_plan",
+    "propose_fitness_activity",
+    "propose_personal_context",
+}
+
+
+def _normalize_action(action: dict) -> dict | None:
+    """Accept only the small, server-owned action contract.
+
+    The model can suggest JSON, but it must not invent an executable operation
+    or push unbounded text into the pending-action column.
+    """
+    name = action.get("action")
+    if name not in _SUPPORTED_ACTIONS:
+        return None
+    normalized = {key: value for key, value in action.items() if key != "action"}
+    normalized["action"] = name
+    for key in ("title", "existing_title", "description", "notes", "activity_type"):
+        if key in normalized and normalized[key] is not None:
+            if not isinstance(normalized[key], str) or len(normalized[key].strip()) > 500:
+                return None
+            normalized[key] = normalized[key].strip()
+    if name in {"update_todo", "complete_todo", "delete_todo"} and not normalized.get("existing_title") and not normalized.get("todo_id"):
+        return None
+    return normalized
+
+
+async def _resolve_todo_for_action(db: AsyncSession, family_id: uuid.UUID, user_id: uuid.UUID, action: dict):
+    """Resolve one owned todo, refusing ambiguous title-based mutations."""
+    from app.models.time import Todo
+
+    todo_id = action.get("todo_id")
+    if todo_id:
+        try:
+            todo = await db.scalar(select(Todo).where(
+                Todo.id == uuid.UUID(str(todo_id)),
+                Todo.family_id == family_id,
+                Todo.user_id == user_id,
+            ))
+        except (ValueError, AttributeError):
+            todo = None
+        if todo is None:
+            raise ValueError("I could not find that todo. Please tell me its exact title.")
+        return todo
+
+    title = str(action.get("existing_title") or "").strip().casefold()
+    todos = await db.scalars(select(Todo).where(
+        Todo.family_id == family_id,
+        Todo.user_id == user_id,
+    ).order_by(Todo.due_date, Todo.created_at))
+    matches = [todo for todo in todos if todo.title.strip().casefold() == title]
+    due_date = action.get("existing_due_date")
+    if due_date is None and action.get("action") != "update_todo":
+        due_date = action.get("due_date")
+    if isinstance(due_date, str):
+        try:
+            requested_date = date.fromisoformat(due_date)
+            matches = [todo for todo in matches if todo.due_date == requested_date]
+        except ValueError:
+            raise ValueError("That due date is invalid. Please use YYYY-MM-DD.")
+    if not matches:
+        raise ValueError("I could not find that todo. Please tell me its exact title and date.")
+    if len(matches) > 1:
+        raise ValueError("I found more than one todo with that title. Please include its date.")
+    return matches[0]
 
 
 def _is_action_confirmation(message: str) -> bool:
@@ -240,7 +318,7 @@ async def apply_pending_action(
     conv = await db.scalar(select(XomniConversation).where(
         XomniConversation.id == conversation_id,
         XomniConversation.user_id == user_id,
-    ))
+    ).with_for_update())
     if not conv or not conv.pending_action:
         raise ValueError("There is no pending Xomni action to confirm.")
     if conv.pending_action_expires_at and conv.pending_action_expires_at < datetime.now(UTC):
@@ -253,6 +331,9 @@ async def apply_pending_action(
     if not isinstance(action, dict):
         raise ValueError("The pending Xomni action is invalid.")
 
+    action = _normalize_action(action)
+    if action is None:
+        raise ValueError("The pending Xomni action is invalid or unsupported.")
     action_name = action.get("action")
     result: dict[str, Any] = {"action": action_name, "affected": []}
     if action_name == "propose_todo":
@@ -310,6 +391,46 @@ async def apply_pending_action(
         result["affected"].append({"type": "todo", "id": str(todo.id), "due_date": due.isoformat()})
         if block_id:
             result["affected"].append({"type": "time_block", "id": str(block_id)})
+    elif action_name in {"update_todo", "complete_todo", "delete_todo"}:
+        todo = await _resolve_todo_for_action(db, family_id, user_id, action)
+        if action_name == "delete_todo":
+            todo_id = todo.id
+            await time_service.delete_todo(db, family_id, user_id, todo_id)
+            result["affected"].append({"type": "todo", "id": str(todo_id), "operation": "deleted"})
+        else:
+            if action_name == "complete_todo":
+                await time_service.update_todo(
+                    db, family_id, user_id, todo.id, {"status": "done"}
+                )
+                operation = "completed"
+            else:
+                update_payload: dict[str, Any] = {}
+                if isinstance(action.get("title"), str) and action["title"].strip():
+                    update_payload["title"] = action["title"].strip()
+                if isinstance(action.get("description"), str):
+                    update_payload["description"] = action["description"].strip()
+                if isinstance(action.get("due_date"), str):
+                    try:
+                        update_payload["due_date"] = date.fromisoformat(action["due_date"])
+                    except ValueError as exc:
+                        raise ValueError("That due date is invalid. Please use YYYY-MM-DD.") from exc
+                for key in ("start_hour", "end_hour"):
+                    if key in action and not isinstance(action[key], int):
+                        raise ValueError("Task times must be whole hours between 0 and 24.")
+                if "start_hour" in action or "end_hour" in action:
+                    start_hour = action.get("start_hour", (todo.start_minute or 0) // 60)
+                    end_hour = action.get("end_hour", (todo.end_minute or 0) // 60)
+                    if not (isinstance(start_hour, int) and isinstance(end_hour, int) and 0 <= start_hour < end_hour <= 24):
+                        raise ValueError("The updated task time is invalid.")
+                    update_payload["start_minute"] = start_hour * 60
+                    update_payload["end_minute"] = end_hour * 60
+                if action.get("priority") in {"normal", "important", "less"}:
+                    update_payload["priority"] = action["priority"]
+                if not update_payload:
+                    raise ValueError("Tell me what should change in that todo.")
+                await time_service.update_todo(db, family_id, user_id, todo.id, update_payload)
+                operation = "updated"
+            result["affected"].append({"type": "todo", "id": str(todo.id), "operation": operation})
     elif action_name == "propose_meal_plan":
         from app.models.xomni import MealPlan
 

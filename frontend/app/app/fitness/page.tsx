@@ -89,6 +89,12 @@ export default function FitnessPage() {
     void loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    const refresh = () => void loadData();
+    window.addEventListener("aarogya:data-changed", refresh);
+    return () => window.removeEventListener("aarogya:data-changed", refresh);
+  }, [loadData]);
+
   const handleUpdateLevel = async (newLevel: number) => {
     await apiClient("/api/v1/fitness/profile", {
       method: "PUT",
