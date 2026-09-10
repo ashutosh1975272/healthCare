@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
   Plus, Send, ChevronRight, Menu, Settings2,
-  Utensils, Clock, Activity, FileText, Sparkles, X, Volume2, Search,
+  Utensils, Clock, Activity, FileText, Sparkles, X, Volume2, MicOff, Search,
   MoreHorizontal, Link2, Download, History, BrainCircuit, ActivitySquare, TriangleAlert
 } from "lucide-react";
 import { apiClient, getAccessToken, setAccessToken } from "@/lib/auth-client";
@@ -329,6 +329,10 @@ export default function XomniPage() {
     },
     [send]
   );
+
+  const handleVoiceRoomError = useCallback((message: string) => {
+    console.error("Voice error:", message);
+  }, []);
 
   // ── Load conversation messages ──────────────────────────────────────────
   const loadConversation = async (convId: string) => {
