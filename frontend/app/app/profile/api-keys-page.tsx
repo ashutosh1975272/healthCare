@@ -65,6 +65,11 @@ export default function ProfileApiKeysPage() {
     },
   };
 
+  const [telegramToken, setTelegramToken] = useState("");
+  const [telegramUsername, setTelegramUsername] = useState("");
+  const [telegramStatus, setTelegramStatus] = useState<string | null>(null);
+  const [telegramLoading, setTelegramLoading] = useState(false);
+
   const load = useCallback(async () => {
     setError(null);
     setLoading(true);
@@ -81,6 +86,8 @@ export default function ProfileApiKeysPage() {
       }
 
       setKeys(acc.data || []);
+      const telegramKey = (acc.data || []).find((k: { provider: string }) => k.provider === "telegram");
+      setTelegramStatus(telegramKey?.is_active ? "connected" : null);
     } catch (e) {
       setError("Failed to load API keys. Please try again.");
       setKeys(null);
@@ -134,6 +141,38 @@ export default function ProfileApiKeysPage() {
     },
     []
   );
+
+  const handleConnectTelegram = useCallback(async () => {
+    setError(null);
+    setTelegramLoading(true);
+    try {
+      const res = await apiClient<{ connected: boolean; bot_username?: string; webhook_registered?: boolean }>(
+        "/api/v1/integrations/telegram/connect",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            bot_token: telegramToken.trim(),
+            telegram_username: telegramUsername.trim() || undefined,
+          }),
+        }
+      );
+      if (res.error) {
+        setError(res.error.detail || "Failed to connect Telegram.");
+        setTelegramStatus(null);
+        return;
+      }
+      setSuccess(`Telegram connected as @${res.data?.bot_username ?? "unknown"}`);
+      setTelegramStatus("connected");
+      setTelegramToken("");
+      setTelegramUsername("");
+      void load();
+    } catch (e: any) {
+      setError(e.response?.detail || "Failed to connect Telegram. Please try again.");
+      setTelegramStatus(null);
+    } finally {
+      setTelegramLoading(false);
+    }
+  }, [telegramToken, telegramUsername, load]);
 
   if (loading) {
     return (
@@ -284,12 +323,14 @@ export default function ProfileApiKeysPage() {
                       ? "Groq"
                       : key.provider === "ollama"
                       ? "Ollama (local)"
+                      : key.provider === "telegram"
+                      ? "Telegram"
                       : "Mock"}
                   </span>
                   <span className="text-muted">
                     {key.is_active ? "Active" : "Inactive"}
                   </span>
-                  {key.is_active && (
+                  {key.is_active && key.provider !== "telegram" && (
                     <Button
                       size="icon"
                         variant="ghost"
@@ -299,7 +340,7 @@ export default function ProfileApiKeysPage() {
                       ⚙️
                     </Button>
                   )}
-                  {!key.is_active && (
+                  {!key.is_active && key.provider !== "telegram" && (
                     <Button
                       size="icon"
                         variant="ghost"
@@ -307,7 +348,7 @@ export default function ProfileApiKeysPage() {
                         aria-label="Reactivate"
                       >
                         ⏳
-                      </Button>
+                    </Button>
                   )}
                 </div>
               ))}
@@ -315,6 +356,53 @@ export default function ProfileApiKeysPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Telegram Connection */}
+      <Card>
+        <CardHeader>
+          <p className="text-sm font-semibold text-ink">Telegram Bot</p>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <p className="text-xs text-muted">
+              Connect your Telegram bot to chat with Aarogya via Xomni. Paste the bot token from @BotFather.
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-muted">Bot Token</p>
+            <Input
+              type="password"
+              placeholder="123456:ABC-DEF..."
+              value={telegramToken}
+              onChange={(e) => setTelegramToken(e.target.value)}
+              disabled={telegramLoading || telegramStatus === "connected"}
+              className="w-full"
+            />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-muted">Allowed Username <span className="text-muted">(optional)</span></p>
+            <Input
+              type="text"
+              placeholder="@yourusername"
+              value={telegramUsername}
+              onChange={(e) => setTelegramUsername(e.target.value)}
+              disabled={telegramLoading || telegramStatus === "connected"}
+              className="w-full"
+            />
+          </div>
+          <div className="flex gap-2 sm:col-span-2">
+            <Button
+              disabled={telegramLoading || !telegramToken.trim() || telegramStatus === "connected"}
+              onClick={handleConnectTelegram}
+            >
+              {telegramStatus === "connected" ? "Connected" : telegramLoading ? "Connecting..." : "Connect Telegram"}
+            </Button>
+            {telegramStatus === "connected" && (
+              <span className="text-xs text-success self-center">Bot is live and routed through Xomni.</span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Model Selection Info */}
       {keys && keys.length > 0 && (
