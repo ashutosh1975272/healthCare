@@ -7,8 +7,16 @@ set -euo pipefail
 : "${DOMAIN:?export DOMAIN=app.example.com first}"
 [[ -f .env.vps ]] || { echo "missing .env.vps (copy from .env.vps.example)"; exit 1; }
 
+# Load .env.vps so HTTPS_PORT and AAROGYA_CERTS_DIR are available even if
+# the caller did not export them.
+set -a
+source .env.vps
+set +a
+
 COMPOSE="docker compose -f docker-compose.vps.yml"
 export DOMAIN
+export HTTPS_PORT="${HTTPS_PORT:-20354}"
+export AAROGYA_CERTS_DIR="${AAROGYA_CERTS_DIR:-$HOME/aarogya-certs}"
 
 echo "[1/5] validating compose config..."
 $COMPOSE config -q
@@ -22,7 +30,7 @@ $COMPOSE up -d --wait --wait-timeout 300 api || true
 
 echo "[4/5] health gates..."
 for i in $(seq 1 30); do
-  if curl -fsS -m 5 "https://$DOMAIN/health/ready" | grep -q '"ready"'; then
+  if curl -fsS -m 5 "https://$DOMAIN:$HTTPS_PORT/health/ready" | grep -q '"ready"'; then
     echo "api READY"
     break
   fi

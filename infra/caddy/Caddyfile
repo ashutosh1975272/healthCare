@@ -1,12 +1,15 @@
 # Caddy reverse proxy for the VPS deployment.
-# DOMAIN comes from the environment (export DOMAIN=... before compose up).
-# Caddy provisions and renews Let's Encrypt certificates automatically.
-# Plain HTTP is redirect-upgraded; mic access + Telegram webhooks require it.
+# TLS is manual (DNS-01 certs issued by certbot, mounted read-only).
+# HTTP is intentionally disabled because port 80 is taken on this host.
+# HTTPS_PORT is set from environment; default 20354 for shared VPS hosts.
 {
-	auto_https on
+	auto_https off
 }
 
 {$DOMAIN} {
+	# Manual TLS — certs issued externally and mounted read-only.
+	tls /certs/fullchain.pem /certs/privkey.pem
+
 	encode gzip
 
 	# Backend API (chat, auth, voice tokens, Telegram webhook, health).

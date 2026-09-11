@@ -125,21 +125,17 @@ services:
     networks:
       - aarogya
 
-  # NOTE: no `web` service here by design — the frontend stays on Vercel
-  # and reaches the API through Caddy below (API_INTERNAL_URL on Vercel).
-
-  # Automatic HTTPS (Let's Encrypt) + reverse proxy. REQUIRED: Telegram
-  # webhooks refuse plain HTTP, and the Vercel BFF expects a stable
-  # https origin for the API.
-  # Ports are env-driven because shared VPS hosts often have 80/443 taken:
-  #   HTTP_PORT=80 HTTPS_PORT=443  (defaults; change if occupied)
+  # Manual HTTPS only (port 80 is taken on this host).
+  # Certs are issued by certbot on the host and mounted read-only below.
+  # Telegram webhooks and the Vercel BFF both require HTTPS, but accept
+  # any valid port — here we bind the host's free 20354 range.
   caddy:
     image: caddy:2-alpine
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-20354}:443"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${AAROGYA_CERTS_DIR:-~/aarogya-certs}:/certs:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
