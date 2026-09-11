@@ -83,6 +83,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
 export function useTheme() {
   const v = React.useContext(ThemeCtx);
-  if (!v) throw new Error("useTheme must be inside ThemeProvider");
+  if (!v) {
+    // Defensive: never throw during render. A stale cached bundle or a
+    // tree rendered outside the provider (e.g. global-error) gets safe
+    // read-only defaults instead of crashing the whole page.
+    if (typeof window !== "undefined") {
+      console.warn("useTheme used outside ThemeProvider; using defaults");
+    }
+    return {
+      theme: "system" as Theme,
+      resolved: "light" as const,
+      setTheme: () => undefined,
+    };
+  }
   return v;
 }
