@@ -6,7 +6,7 @@
 	auto_https off
 }
 
-{$DOMAIN} {
+aarogya-health-ak123456789.duckdns.org {
 	# Manual TLS — certs issued externally and mounted read-only.
 	tls /certs/fullchain.pem /certs/privkey.pem
 
