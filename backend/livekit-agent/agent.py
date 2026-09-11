@@ -66,13 +66,9 @@ class _GroqChatStream(llm.LLMStream):
                     if delta:
                         await emit(delta)
             finally:
-                # Always terminate the turn: if the stream died mid-way after
-                # partial audio, the session still gets a clean end-of-stream
-                # instead of hanging on an unfinished turn.
                 if not first:
                     await emit(" ")
             if first:
-                # Stream completed without any delta — say so plainly.
                 await emit(
                     "I didn't catch a full reply just now. Please try again shortly."
                 )
@@ -110,14 +106,9 @@ class UserGroqVoiceLLM(llm.LLM):
 
 
 async def entrypoint(ctx: JobContext):
-    # Wait for the participant to connect
     participant = await ctx.wait_for_participant()
     logger.info(f"Participant joined: {participant.identity}")
 
-    # Per-user Groq key: participant identity is the app user UUID
-    # (set by POST /voice/livekit-token). Never logged.
-    # Distinct states so ops can tell worker misconfig apart from a user
-    # who simply hasn't added a key yet (free-tier debugging).
     database_url = os.environ.get("DATABASE_URL", "")
     secret_key = os.environ.get("SECRET_KEY", "")
     groq_key = None
@@ -128,7 +119,6 @@ async def entrypoint(ctx: JobContext):
     else:
         logger.warning("DATABASE_URL/SECRET_KEY missing on worker; voice runs in guidance mode.")
 
-    # Load past conversation history from user_context.json
     context_file = "user_context.json"
     past_messages = []
     if os.path.exists(context_file):
@@ -140,8 +130,6 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.error(f"Failed to load user context: {e}")
 
-    # Noise cancellation needs LiveKit Cloud; fall back gracefully for local
-    # `livekit-server --dev` runs which do not provide BVC.
     try:
         audio_input = room_io.AudioInputOptions(
             noise_cancellation=noise_cancellation.BVC(),
@@ -150,9 +138,6 @@ async def entrypoint(ctx: JobContext):
         logger.warning("BVC noise cancellation unavailable; continuing without it.")
         audio_input = room_io.AudioInputOptions()
 
-    # Set up the fallback-capable pipeline session.
-    # Endpointing is deliberately relaxed (0.5s / 1.5s) so Hindi and slow
-    # English speech is not cut off mid-sentence.
     session = AgentSession(
         stt=stt.FallbackAdapter(
             [
@@ -177,11 +162,9 @@ async def entrypoint(ctx: JobContext):
         max_endpointing_delay=1.5,
     )
 
-    # Pre-populate session history with past context
     for msg in past_messages:
         session.history.add_message(role=msg["role"], content=msg["content"])
 
-    # Register observability and performance logging
     @session.on("agent_state_changed")
     def on_agent_state_changed(event: AgentStateChangedEvent):
         logger.info(f"Agent state changed from {event.old_state} to {event.new_state}")
@@ -200,8 +183,6 @@ async def entrypoint(ctx: JobContext):
         logger.exception("Error starting session")
         return
 
-    # Speak first so the user hears the agent immediately (proves the audio
-    # path works) instead of silence until their first utterance is processed.
     try:
         await session.generate_reply(
             instructions="Greet the user briefly and ask how you can help."
@@ -210,11 +191,6 @@ async def entrypoint(ctx: JobContext):
         logger.exception("Greeting reply failed")
 
     async def save_context(reason: str = ""):
-        # reason is provided by the framework on shutdown; logged at debug
-        # only (never message bodies — no PHI in logs).
-        # Save updated conversation context to user_context.json.
-        # Content items may be plain strings or rich content parts — extract
-        # text defensively without logging message bodies (no PHI in logs).
         updated_messages = []
         for item in session.history.messages():
             content_str = ""
@@ -257,9 +233,6 @@ async def entrypoint(ctx: JobContext):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    # Render's small instance can report a high baseline CPU load while the
-    # model plugins are warming up. Keep one worker process and allow a single
-    # active call instead of advertising the agent as unavailable at startup.
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,

@@ -38,7 +38,6 @@ function extractTranscriptText(raw: string): string | null {
   if (!trimmed) return null;
   try {
     const parsed = JSON.parse(trimmed) as TranscriptPayload;
-    // Agent lifecycle messages (thinking/speaking flags) are state, not speech.
     if (typeof parsed.text === "string" && parsed.text.trim()) return parsed.text.trim();
     if (typeof parsed.transcript === "string" && parsed.transcript.trim())
       return parsed.transcript.trim();
@@ -125,14 +124,15 @@ function VoiceRoomEvents({
     };
   }, [room, forwardTranscript, deriveSpeakingStatus]);
 
-  // Worker-offline: room stayed empty (no agent joined) 15s after connect.
+  // Worker-offline: room stayed empty (no agent joined) 20s after connect.
+  // Increased from 15s to reduce false positives during cold starts.
   useEffect(() => {
     const timer = window.setTimeout(() => {
       if (room.remoteParticipants.size === 0) {
         onErrorRef.current("Voice worker offline. Please try again later.");
         onRequestLeaveRef.current();
       }
-    }, 15000);
+    }, 20000);
     const cancelEarly = () => window.clearTimeout(timer);
     room.on(RoomEvent.ParticipantConnected, cancelEarly);
     room.once(RoomEvent.Disconnected, cancelEarly);
@@ -152,6 +152,7 @@ export function VoiceTalkButton({ onTranscript, onError, context = "general", on
   const [roomName, setRoomName] = useState<string | null>(null);
   const startingRef = useRef(false);
   const capTimerRef = useRef<number | null>(null);
+  const retryTimerRef = useRef<number | null>(null);
 
   const clearCapTimer = useCallback(() => {
     if (capTimerRef.current !== null) {
@@ -160,10 +161,16 @@ export function VoiceTalkButton({ onTranscript, onError, context = "general", on
     }
   }, []);
 
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
+
   const leave = useCallback(() => {
     clearCapTimer();
-    // Best-effort slot release so the next caller is not blocked.
-    // The 12-minute server TTL covers missed hangups.
+    clearRetryTimer();
     const room = roomName;
     if (room) {
       void apiClient("/api/v1/xomni/voice/hangup", {
@@ -177,7 +184,7 @@ export function VoiceTalkButton({ onTranscript, onError, context = "general", on
     setStatus("idle");
     startingRef.current = false;
     onActiveChange?.(false);
-  }, [clearCapTimer, onActiveChange, roomName]);
+  }, [clearCapTimer, clearRetryTimer, onActiveChange, roomName]);
 
   const start = useCallback(async () => {
     if (startingRef.current || status !== "idle") return;
@@ -202,9 +209,15 @@ export function VoiceTalkButton({ onTranscript, onError, context = "general", on
     if (error || !data?.token || !data?.livekit_url) {
       if (error?.status === 409) {
         onError("Someone is on a live voice call right now. Please try again in a few minutes.");
-      } else {
-        onError("Could not start voice session. Please try again.");
+        // Block auto-retry so the stale lock can expire instead of hammering the API.
+        startingRef.current = false;
+        retryTimerRef.current = window.setTimeout(() => {
+          setStatus("idle");
+          startingRef.current = false;
+        }, 5000);
+        return;
       }
+      onError("Could not start voice session. Please try again.");
       setStatus("idle");
       startingRef.current = false;
       return;
@@ -214,8 +227,6 @@ export function VoiceTalkButton({ onTranscript, onError, context = "general", on
     setRoomName(data.room_name ?? null);
     setStatus("listening");
     onActiveChange?.(true);
-    // Free-tier guard: end the call at the cap so one session cannot burn
-    // the monthly inference budget. 0 disables.
     clearCapTimer();
     if (maxMinutes > 0) {
       capTimerRef.current = window.setTimeout(() => {
@@ -223,7 +234,7 @@ export function VoiceTalkButton({ onTranscript, onError, context = "general", on
         leave();
       }, maxMinutes * 60 * 1000);
     }
-  }, [context, onActiveChange, onError, status, maxMinutes, clearCapTimer, leave]);
+  }, [context, onActiveChange, onError, status, maxMinutes, clearCapTimer, clearRetryTimer, leave]);
 
   const toggle = useCallback(() => {
     if (status === "idle") {
@@ -236,6 +247,7 @@ export function VoiceTalkButton({ onTranscript, onError, context = "general", on
   const active = status !== "idle";
 
   useEffect(() => clearCapTimer, [clearCapTimer]);
+  useEffect(() => clearRetryTimer, [clearRetryTimer]);
 
   return (
     <>

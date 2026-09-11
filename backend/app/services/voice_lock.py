@@ -1,12 +1,8 @@
 """Single active voice-call guard (free-tier hard limit: one call at a time).
 
-Two layers, either one enforcing is enough:
-1. Redis lock ``voice:call:active`` = room name (SET NX, 12-min TTL).
+1. Redis lock ``voice:call:active`` = room name (SET NX, 2-min TTL).
    Released on explicit hangup; TTL covers crashes.
-2. LiveKit ground truth: any room with participants > 0 means busy.
-
-A lock naming a room that is no longer live is treated as stale and
-stolen. Redis being down degrades to the LiveKit check (logged).
+2. LiveKit ground truth: only the locked room is checked for participants.
 """
 
 from __future__ import annotations
@@ -21,7 +17,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 VOICE_LOCK_KEY = "voice:call:active"
-VOICE_LOCK_TTL_SECONDS = 12 * 60
+VOICE_LOCK_TTL_SECONDS = 2 * 60
 
 _client: redis.Redis | None = None
 _client_loop: asyncio.AbstractEventLoop | None = None
@@ -58,24 +54,32 @@ async def _redis() -> redis.Redis | None:
         return None
 
 
-async def livekit_room_busy(room: str | None = None) -> bool:
-    """True if any voice room currently has participants (or `room` does)."""
-    import os
+async def _current_locked_room() -> str | None:
+    client = await _redis()
+    if client is None:
+        return None
+    try:
+        return await client.get(VOICE_LOCK_KEY)
+    except Exception:
+        return None
 
-    lk_url = os.environ.get("LIVEKIT_URL", "")
-    lk_key = os.environ.get("LIVEKIT_API_KEY", "")
-    lk_secret = os.environ.get("LIVEKIT_API_SECRET", "")
+
+async def livekit_room_busy(room: str | None = None) -> bool:
+    """True if the locked room currently has participants."""
+    lk_url = settings.livekit_url
+    lk_key = settings.livekit_api_key
+    lk_secret = settings.livekit_api_secret
     if not lk_url or not lk_key or not lk_secret:
         return False
     try:
-        from livekit.api import LiveKitAPI, ListParticipantsRequest, ListRoomsRequest
+        from livekit.api import LiveKitAPI, ListParticipantsRequest
 
         async with LiveKitAPI(lk_url, lk_key, lk_secret) as api:
-            if room:
-                ps = await api.room.list_participants(ListParticipantsRequest(room=room))
-                return len(ps.participants) > 0
-            rooms = await api.room.list_rooms(ListRoomsRequest())
-            return any((r.num_participants or 0) > 0 for r in rooms.rooms)
+            target = room or await _current_locked_room()
+            if not target:
+                return False
+            ps = await api.room.list_participants(ListParticipantsRequest(room=target))
+            return len(ps.participants) > 0
     except Exception:
         logger.warning("voice lock: LiveKit check failed", exc_info=True)
         return False
@@ -86,25 +90,24 @@ async def acquire_voice_call(room: str) -> tuple[bool, str]:
 
     Returns (acquired, reason): reason is "ok", "busy" or "stale-stolen".
     """
-    if await livekit_room_busy():
-        return False, "busy"
     client = await _redis()
-    if client is None:
-        return True, "ok"  # LiveKit check above already passed
-    try:
-        taken = await client.set(VOICE_LOCK_KEY, room, nx=True, ex=VOICE_LOCK_TTL_SECONDS)
-        if taken:
-            return True, "ok"
-        current = await client.get(VOICE_LOCK_KEY)
-        if current and not await livekit_room_busy(current):
-            # Stale lock (crash without hangup): steal it.
-            await client.set(VOICE_LOCK_KEY, room, ex=VOICE_LOCK_TTL_SECONDS)
-            logger.info("voice lock: stole stale lock for finished room")
-            return True, "stale-stolen"
+    if client is not None:
+        try:
+            taken = await client.set(VOICE_LOCK_KEY, room, nx=True, ex=VOICE_LOCK_TTL_SECONDS)
+            if taken:
+                return True, "ok"
+            current = await client.get(VOICE_LOCK_KEY)
+            if current and not await livekit_room_busy(current):
+                await client.set(VOICE_LOCK_KEY, room, ex=VOICE_LOCK_TTL_SECONDS)
+                logger.info("voice lock: stole stale lock for finished room")
+                return True, "stale-stolen"
+            return False, "busy"
+        except Exception:
+            logger.warning("voice lock: redis error on acquire", exc_info=True)
+
+    if await livekit_room_busy(room):
         return False, "busy"
-    except Exception:
-        logger.warning("voice lock: redis error on acquire", exc_info=True)
-        return True, "ok"
+    return True, "ok"
 
 
 async def release_voice_call(room: str) -> bool:
