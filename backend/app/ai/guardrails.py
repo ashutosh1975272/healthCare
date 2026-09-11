@@ -25,18 +25,26 @@ _DIAGNOSIS_PATTERNS = (
 
 @lru_cache(maxsize=1)
 def get_medical_disclaimer() -> str:
-    """Prefer verbatim copy-guide disclaimer.ai_output when the file is present."""
-    candidates = [
-        Path(__file__).resolve().parents[4] / "docs" / "copy-guide.md",
-        Path(__file__).resolve().parents[5] / "docs" / "copy-guide.md",
-        Path("/app/docs/copy-guide.md"),
-    ]
+    """Prefer verbatim copy-guide disclaimer.ai_output when the file is present.
+
+    Layout-independent: walks up from this file looking for
+    docs/copy-guide.md (repo checkout, backend/ subdir, or /app image
+    layouts) instead of hardcoded parent indexes that break when the
+    install depth changes. Never raises — falls back to the builtin text.
+    """
+    marker = "**`disclaimer.ai_output`**"
+    candidates: list[Path] = []
+    try:
+        here = Path(__file__).resolve().parent
+        candidates.extend([p / "docs" / "copy-guide.md" for p in [here, *here.parents]])
+        candidates.append(Path("/app/docs/copy-guide.md"))
+    except Exception:
+        return _FALLBACK_DISCLAIMER
     for path in candidates:
         try:
             if not path.is_file():
                 continue
             text = path.read_text(encoding="utf-8")
-            marker = "**`disclaimer.ai_output`**"
             idx = text.find(marker)
             if idx < 0:
                 continue
