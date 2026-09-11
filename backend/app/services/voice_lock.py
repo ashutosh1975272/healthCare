@@ -89,7 +89,12 @@ async def acquire_voice_call(room: str) -> tuple[bool, str]:
     """Try to claim the single voice slot for `room`.
 
     Returns (acquired, reason): reason is "ok", "busy" or "stale-stolen".
+
+    LiveKit is checked first so a live room always blocks, even if the
+    Redis lock expired or was never set (hard single-call guarantee).
     """
+    if await livekit_room_busy():
+        return False, "busy"
     client = await _redis()
     if client is not None:
         try:

@@ -1,0 +1,173 @@
+# VPS production stack for Aarogya (single host, Docker Compose).
+# Usage: docker compose -f docker-compose.vps.yml [--profile web] up -d --build
+# Managed data plane (Neon Postgres + Upstash Redis) comes from .env.vps.
+# Local-only services from docker-compose.yml (postgres, redis, mailhog)
+# are intentionally NOT part of this file.
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env.vps}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - aarogya
+
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minio} $${MINIO_ROOT_PASSWORD:-minio123};
+      mc mb --ignore-existing local/aarogya-reports;
+      mc mb --ignore-existing local/aarogya-private;
+      exit 0;
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env.vps}
+    networks:
+      - aarogya
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env.vps
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env.vps}
+      MINIO_BUCKET_REPORTS: aarogya-reports
+      MINIO_BUCKET_PRIVATE: aarogya-private
+      MINIO_SECURE: "false"
+      APP_ENV: production
+      OTP_DEV_MODE: "false"
+    depends_on:
+      minio:
+        condition: service_healthy
+      createbuckets:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    mem_limit: 768m
+    restart: unless-stopped
+    networks:
+      - aarogya
+
+  celery:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info"]
+    env_file:
+      - .env.vps
+    environment:
+      APP_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 512m
+    restart: unless-stopped
+    networks:
+      - aarogya
+
+  beat:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info"]
+    env_file:
+      - .env.vps
+    environment:
+      APP_ENV: production
+    depends_on:
+      - celery
+    mem_limit: 256m
+    restart: unless-stopped
+    networks:
+      - aarogya
+
+  # Realtime voice worker: outbound WebRTC to LiveKit Cloud, no inbound
+  # ports. Replaces the Render free worker (OOM) and stays always-on.
+  livekit-agent:
+    build:
+      context: ./backend/livekit-agent
+      dockerfile: Dockerfile
+    env_file:
+      - .env.vps
+    expose:
+      - "7860"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:7860').read(1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    mem_limit: 1g
+    restart: unless-stopped
+    networks:
+      - aarogya
+
+  # Optional: host the frontend on the VPS too (Vercel stays primary).
+  # Enable with: docker compose -f docker-compose.vps.yml --profile web up -d
+  web:
+    profiles: ["web"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SITE_URL: https://${DOMAIN:?set DOMAIN}
+    environment:
+      API_INTERNAL_URL: http://api:8000
+      NEXT_PUBLIC_SITE_URL: https://${DOMAIN:?set DOMAIN}
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 256m
+    restart: unless-stopped
+    networks:
+      - aarogya
+
+  # Automatic HTTPS (Let's Encrypt) + reverse proxy. REQUIRED: browsers
+  # block microphone access and Telegram rejects webhooks over plain HTTP.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - aarogya
+
+volumes:
+  minio_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  aarogya:
+    driver: bridge
