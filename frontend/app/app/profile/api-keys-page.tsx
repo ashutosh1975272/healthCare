@@ -69,6 +69,7 @@ export default function ProfileApiKeysPage() {
   const [telegramUsername, setTelegramUsername] = useState("");
   const [telegramStatus, setTelegramStatus] = useState<string | null>(null);
   const [telegramLoading, setTelegramLoading] = useState(false);
+  const [telegramBotUsername, setTelegramBotUsername] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -88,6 +89,7 @@ export default function ProfileApiKeysPage() {
       setKeys(acc.data || []);
       const telegramKey = (acc.data || []).find((k: { provider: string }) => k.provider === "telegram");
       setTelegramStatus(telegramKey?.is_active ? "connected" : null);
+      setTelegramBotUsername(telegramKey?.provider === "telegram" ? telegramKey.provider : null);
     } catch (e) {
       setError("Failed to load API keys. Please try again.");
       setKeys(null);
@@ -163,6 +165,7 @@ export default function ProfileApiKeysPage() {
       }
       setSuccess(`Telegram connected as @${res.data?.bot_username ?? "unknown"}`);
       setTelegramStatus("connected");
+      setTelegramBotUsername(res.data?.bot_username ?? null);
       setTelegramToken("");
       setTelegramUsername("");
       void load();
@@ -360,12 +363,26 @@ export default function ProfileApiKeysPage() {
       {/* Telegram Connection */}
       <Card>
         <CardHeader>
-          <p className="text-sm font-semibold text-ink">Telegram Bot</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-ink">Telegram Bot</p>
+              <p className="text-xs text-muted mt-1">
+                {telegramStatus === "connected"
+                  ? `Connected as @${telegramBotUsername ?? "bot"}`
+                  : "Connect your Telegram bot to chat with Aarogya via Xomni"}
+              </p>
+            </div>
+            {telegramStatus === "connected" ? (
+              <span className="inline-flex items-center rounded-full border border-success/40 bg-success/10 px-2.5 py-0.5 text-xs font-medium text-success">Connected</span>
+            ) : (
+              <span className="inline-flex items-center rounded-full border border-muted/40 bg-mist/60 px-2.5 py-0.5 text-xs font-medium text-muted">Not connected</span>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <p className="text-xs text-muted">
-              Connect your Telegram bot to chat with Aarogya via Xomni. Paste the bot token from @BotFather.
+              Paste the bot token from @BotFather. Your messages will be routed through Xomni AI.
             </p>
           </div>
           <div>
