@@ -14,6 +14,14 @@ source .env.vps
 set +a
 
 COMPOSE="docker compose -f docker-compose.vps.yml"
+if ! docker compose version >/dev/null 2>&1; then
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE="docker-compose -f docker-compose.vps.yml"
+  else
+    echo "ERROR: neither 'docker compose' nor 'docker-compose' is available" >&2
+    exit 1
+  fi
+fi
 export DOMAIN
 export HTTPS_PORT="${HTTPS_PORT:-20354}"
 export AAROGYA_CERTS_DIR="${AAROGYA_CERTS_DIR:-$HOME/aarogya-certs}"
