@@ -125,28 +125,12 @@ services:
     networks:
       - aarogya
 
-  # Optional: host the frontend on the VPS too (Vercel stays primary).
-  # Enable with: docker compose -f docker-compose.vps.yml --profile web up -d
-  web:
-    profiles: ["web"]
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_SITE_URL: https://${DOMAIN:?set DOMAIN}
-    environment:
-      API_INTERNAL_URL: http://api:8000
-      NEXT_PUBLIC_SITE_URL: https://${DOMAIN:?set DOMAIN}
-    depends_on:
-      api:
-        condition: service_healthy
-    mem_limit: 256m
-    restart: unless-stopped
-    networks:
-      - aarogya
+  # NOTE: no `web` service here by design — the frontend stays on Vercel
+  # and reaches the API through Caddy below (API_INTERNAL_URL on Vercel).
 
-  # Automatic HTTPS (Let's Encrypt) + reverse proxy. REQUIRED: browsers
-  # block microphone access and Telegram rejects webhooks over plain HTTP.
+  # Automatic HTTPS (Let's Encrypt) + reverse proxy. REQUIRED: Telegram
+  # webhooks refuse plain HTTP, and the Vercel BFF expects a stable
+  # https origin for the API.
   caddy:
     image: caddy:2-alpine
     ports:

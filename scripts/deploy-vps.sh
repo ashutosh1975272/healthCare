@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
 # VPS deploy: build -> migrate (idempotent, runs in api entrypoint) -> up -> health-gate.
 # Run on the VPS host from the repo root with `.env.vps` filled in.
-# Usage: DOMAIN=app.example.com ./scripts/deploy-vps.sh [--with-web]
+# Usage: DOMAIN=app.example.com ./scripts/deploy-vps.sh
 set -euo pipefail
-
-WITH_WEB=""
-if [[ "${1:-}" == "--with-web" ]]; then
-  WITH_WEB="--profile web"
-fi
 
 : "${DOMAIN:?export DOMAIN=app.example.com first}"
 [[ -f .env.vps ]] || { echo "missing .env.vps (copy from .env.vps.example)"; exit 1; }
 
-COMPOSE="docker compose -f docker-compose.vps.yml $WITH_WEB"
+COMPOSE="docker compose -f docker-compose.vps.yml"
 export DOMAIN
 
 echo "[1/5] validating compose config..."

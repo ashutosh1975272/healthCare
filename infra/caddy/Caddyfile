@@ -9,7 +9,8 @@
 {$DOMAIN} {
 	encode gzip
 
-	# Backend API (chat, auth, voice tokens, Telegram webhook, health)
+	# Backend API (chat, auth, voice tokens, Telegram webhook, health).
+	# The Vercel frontend proxies /api/* here via API_INTERNAL_URL.
 	handle /api/* {
 		reverse_proxy api:8000
 	}
@@ -17,9 +18,9 @@
 		reverse_proxy api:8000
 	}
 
-	# Frontend (only when the `web` profile is enabled; otherwise 404 here
-	# is fine because Vercel serves the UI and proxies /api to this host)
+	# No frontend on this host by design (Vercel serves the UI).
+	# Anything else gets a plain 404 from Caddy.
 	handle {
-		reverse_proxy web:3000
+		respond "Aarogya API — see /health" 404
 	}
 }
