@@ -1,0 +1,9 @@
+# Never bake secrets or local junk into the worker image.
+.env
+.env.*
+__pycache__
+*.pyc
+.venv
+venv
+user_context.json
+voice-test
