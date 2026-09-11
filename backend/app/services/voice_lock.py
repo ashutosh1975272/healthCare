@@ -66,9 +66,14 @@ async def _current_locked_room() -> str | None:
 
 async def livekit_room_busy(room: str | None = None) -> bool:
     """True if the locked room currently has participants."""
-    lk_url = settings.livekit_url
-    lk_key = settings.livekit_api_key
-    lk_secret = settings.livekit_api_secret
+    import os
+
+    # NOTE: os.environ (not Settings) — Settings has no livekit fields and
+    # extra="ignore" drops them, which 500s every token call (verified
+    # locally). Gateway reads the same vars from os.environ.
+    lk_url = os.environ.get("LIVEKIT_URL", "")
+    lk_key = os.environ.get("LIVEKIT_API_KEY", "")
+    lk_secret = os.environ.get("LIVEKIT_API_SECRET", "")
     if not lk_url or not lk_key or not lk_secret:
         return False
     try:
@@ -89,7 +94,12 @@ async def acquire_voice_call(room: str) -> tuple[bool, str]:
     """Try to claim the single voice slot for `room`.
 
     Returns (acquired, reason): reason is "ok", "busy" or "stale-stolen".
+
+    LiveKit is checked first so a live room always blocks, even if the
+    Redis lock expired or was never set (hard single-call guarantee).
     """
+    if await livekit_room_busy():
+        return False, "busy"
     client = await _redis()
     if client is not None:
         try:

@@ -1,9 +1,10 @@
-import path from "path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  outputFileTracingRoot: path.join(__dirname, "../"),
+  // NOTE: no outputFileTracingRoot — it nests server.js under an extra
+  // app/ directory in the standalone output, breaking the Docker runner
+  // (which expects server.js at the standalone root).
   reactStrictMode: true,
   poweredByHeader: false,
   images: {

@@ -1,0 +1,25 @@
+# Caddy reverse proxy for the VPS deployment.
+# DOMAIN comes from the environment (export DOMAIN=... before compose up).
+# Caddy provisions and renews Let's Encrypt certificates automatically.
+# Plain HTTP is redirect-upgraded; mic access + Telegram webhooks require it.
+{
+	auto_https on
+}
+
+{$DOMAIN} {
+	encode gzip
+
+	# Backend API (chat, auth, voice tokens, Telegram webhook, health)
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /health* {
+		reverse_proxy api:8000
+	}
+
+	# Frontend (only when the `web` profile is enabled; otherwise 404 here
+	# is fine because Vercel serves the UI and proxies /api to this host)
+	handle {
+		reverse_proxy web:3000
+	}
+}
