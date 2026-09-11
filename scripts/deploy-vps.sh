@@ -13,6 +13,10 @@ set -a
 source .env.vps
 set +a
 
+# Work around broken docker wrapper on some shared VPS images.
+touch /tmp/docker-wrapper-config.err 2>/dev/null || true
+chmod 666 /tmp/docker-wrapper-config.err 2>/dev/null || true
+
 COMPOSE="docker compose -f docker-compose.vps.yml"
 if ! docker compose version >/dev/null 2>&1; then
   if command -v docker-compose >/dev/null 2>&1; then
