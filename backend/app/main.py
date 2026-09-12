@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,16 +26,27 @@ configure_logging()
 
 app = FastAPI(title="Aarogya API", version="0.1.0", lifespan=lifespan)
 
+# Allowed browser origins. Override via CORS_ORIGINS env (comma-separated)
+# so no frontend URL is ever hardcoded: e.g.
+# CORS_ORIGINS=https://app.example.com,https://admin.example.com
+_DEFAULT_ORIGINS = [
+    "https://health-care-3v73i1jsf-ashutoshteams.vercel.app",
+    "https://health-care-owjk2dbg8-ashutoshteams.vercel.app",
+    "https://health-care-xi-rust.vercel.app",
+    "https://health-care-rtqr.vercel.app",
+    "https://aarogya-health-ak123456789.duckdns.org:20354",
+    "https://aarogya-health-ak123456789.duckdns.org:20356",
+]
+_cors_env = os.environ.get("CORS_ORIGINS", "").strip()
+ALLOW_ORIGINS = (
+    [o.strip() for o in _cors_env.split(",") if o.strip()]
+    if _cors_env
+    else _DEFAULT_ORIGINS
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://health-care-3v73i1jsf-ashutoshteams.vercel.app",
-        "https://health-care-owjk2dbg8-ashutoshteams.vercel.app",
-        "https://health-care-xi-rust.vercel.app",
-        "https://health-care-rtqr.vercel.app",
-        "https://aarogya-health-ak123456789.duckdns.org:20354",
-        "https://aarogya-health-ak123456789.duckdns.org:20356",
-    ],
+    allow_origins=ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
