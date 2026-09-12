@@ -55,8 +55,11 @@ def build_webhook_url(secret: str) -> str:
 
 
 async def telegram_call(token: str, method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    import logging
+
+    log = logging.getLogger(__name__)
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(f"{TELEGRAM_API}/bot{token}/{method}", json=payload or {})
             response.raise_for_status()
             result = response.json()
@@ -74,6 +77,7 @@ async def telegram_call(token: str, method: str, payload: dict[str, Any] | None 
             ) from exc
         raise HTTPException(status_code=502, detail="Telegram API is unavailable.") from exc
     except (httpx.HTTPError, ValueError) as exc:
+        log.warning("telegram_call %s failed: %s", method, type(exc).__name__)
         raise HTTPException(status_code=502, detail="Telegram API is unavailable.") from exc
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("description", "Telegram rejected the request."))
