@@ -14,8 +14,9 @@ Not a medical device. Does not diagnose or prescribe.
 ├── backend/          # FastAPI API, Celery tasks, Alembic migrations, tests
 ├── frontend/         # Next.js 15 App Router (marketing + auth + app shells)
 ├── infra/seed/       # Synthetic demo seed (no real PHI)
-├── docs/             # Screens, data dictionary, copy, auth audit
-├── docker-compose.yml
+├── docs/copy-guide.md # Medical disclaimer copy (read at runtime)
+├── docker-compose.vps.yml          # Production stack (VPS)
+├── docker-compose.local-online.yml # Local API/worker wired to online Neon+Upstash
 ├── Makefile
 ├── PLAN.md           # Master product plan + milestones
 ├── AGENTS.md         # Hard rules for humans and agents

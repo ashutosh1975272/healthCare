@@ -1,6 +1,6 @@
 # Local stack wired to ONLINE services (Neon Postgres + Upstash Redis).
-# The api + livekit-agent read .env.online (gitignored). Local postgres/redis
-# from docker-compose.yml are NOT started here — do not merge the two files.
+# The api + livekit-agent read .env.online (gitignored). Standalone file:
+# local postgres/redis are not part of this setup.
 # Usage: docker compose -f docker-compose.local-online.yml up -d --build api
 # Frontend runs separately: npm run dev (frontend/.env.local -> localhost:8000).
 
