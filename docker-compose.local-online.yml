@@ -79,6 +79,40 @@ services:
     networks:
       - aarogya-local
 
+  # Background jobs (document OCR/extraction). Same image + env as api.
+  # NOTE: kombu requires ?ssl_cert_reqs on rediss:// broker URLs, so these
+  # two services interpolate REDIS_URL from the host shell environment.
+  # Export .env.online into your shell before `compose up celery beat`.
+  celery:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info"]
+    env_file:
+      - .env.online
+    environment:
+      REDIS_URL: ${REDIS_URL}?ssl_cert_reqs=CERT_REQUIRED
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - aarogya-local
+
+  beat:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info"]
+    env_file:
+      - .env.online
+    environment:
+      REDIS_URL: ${REDIS_URL}?ssl_cert_reqs=CERT_REQUIRED
+    depends_on:
+      - celery
+    restart: unless-stopped
+    networks:
+      - aarogya-local
+
 volumes:
   minio_data_local:
 
