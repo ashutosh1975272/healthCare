@@ -99,9 +99,14 @@ function VoiceRoomEvents({
     };
     const handleTranscription = (
       segments: TranscriptionSegment[],
-      _participant?: Participant,
+      participant?: Participant,
       _publication?: TrackPublication
     ) => {
+      // Local-only: the agent's own speech also arrives as transcription
+      // segments. Forwarding those would pipe the agent's replies back into
+      // chat (and re-trigger the chat LLM every turn). Only the user's mic
+      // transcript may start a chat turn.
+      if (participant && !participant.isLocal) return;
       for (const seg of segments) {
         if (seg.final && seg.text.trim()) forwardTranscript(seg.text);
       }

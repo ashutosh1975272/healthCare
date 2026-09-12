@@ -13,6 +13,7 @@ from livekit.plugins import noise_cancellation, silero
 from groq_llm import (
     LIMITED_MODE_MESSAGE,
     VOICE_SYSTEM_PROMPT,
+    VOICE_WORKER_VERSION,
     GroqKeyInvalid,
     NvidiaUnavailable,
     UserGroqLLM,
@@ -143,6 +144,7 @@ _GroqChatStream = _VoiceChatStream
 async def entrypoint(ctx: JobContext):
     participant = await ctx.wait_for_participant()
     logger.info(f"Participant joined: {participant.identity}")
+    logger.info(f"voice-worker {VOICE_WORKER_VERSION} (Groq first, NVIDIA fallback)")
 
     database_url = os.environ.get("DATABASE_URL", "")
     secret_key = os.environ.get("SECRET_KEY", "")

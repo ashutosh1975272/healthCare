@@ -46,7 +46,15 @@ app.include_router(api_router)
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    import os
+
+    return {
+        "status": "ok",
+        # BUILD_SHA lets clients verify which backend serves them
+        # (VPS vs stale Render) and whether the voice fallback is deployed.
+        "version": os.environ.get("BUILD_SHA", "dev"),
+        "voice_chain": "groq-db-env > nvidia-db-env > limited-hint",
+    }
 
 
 @app.get("/health/ready")

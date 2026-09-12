@@ -319,6 +319,75 @@ class HangupRequest(BaseModel):
     room_name: str
 
 
+@router.get("/voice/status", response_model=dict)
+async def voice_status(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    """Voice diagnostics: which workers/participants LiveKit Cloud sees.
+
+    Read-only. Lists `xomni-*` rooms with participant identities so you can
+    tell whether the connected worker runs the new fallback chain (it logs
+    `voice-worker v2`) or a stale pre-fix worker. No audio, no PHI.
+    """
+    import os
+
+    _ = current_user  # authenticated scope; data is room metadata only
+    livekit_url = os.environ.get("LIVEKIT_URL", "")
+    lk_api_key = os.environ.get("LIVEKIT_API_KEY", "")
+    lk_api_secret = os.environ.get("LIVEKIT_API_SECRET", "")
+    if not (livekit_url and lk_api_key and lk_api_secret):
+        raise HTTPException(status_code=400, detail="LiveKit credentials not configured.")
+
+    http_url = livekit_url.replace("wss://", "https://").replace("ws://", "http://")
+    try:
+        from livekit.api import LiveKitAPI, ListRoomsRequest, ListParticipantsRequest
+
+        lkapi = LiveKitAPI(url=http_url, api_key=lk_api_key, api_secret=lk_api_secret)
+        try:
+            rooms_resp = await lkapi.room.list_rooms(ListRoomsRequest())
+            rooms: list[dict] = []
+            for r in (rooms_resp.rooms or []):
+                if not (r.name or "").startswith("xomni-"):
+                    continue
+                try:
+                    parts_resp = await lkapi.room.list_participants(
+                        ListParticipantsRequest(room=r.name)
+                    )
+                    participants = [
+                        {
+                            "identity": p.identity,
+                            "name": p.name,
+                            "kind": str(
+                                getattr(getattr(p, "kind", ""), "name", p.kind)
+                            ),
+                        }
+                        for p in (parts_resp.participants or [])
+                    ]
+                except Exception as e:
+                    participants = [{"error": f"participants lookup failed: {type(e).__name__}"}]
+                rooms.append(
+                    {
+                        "room": r.name,
+                        "num_participants": r.num_participants,
+                        "participants": participants,
+                    }
+                )
+        finally:
+            await lkapi.aclose()
+    except ImportError:
+        raise HTTPException(status_code=400, detail="livekit-api package required.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LiveKit lookup failed: {type(e).__name__}")
+
+    return {
+        "livekit_url": livekit_url,
+        "rooms": rooms,
+        "worker_chain": "groq-db-env > nvidia-db-env > limited-hint",
+    }
+
+
 @router.delete("/voice/hangup", response_model=dict)
 async def voice_hangup(
     payload: HangupRequest,

@@ -23,6 +23,11 @@ NO_KEY_MESSAGE: str = (
     "Please add your Groq API key in Profile, AI Provider Keys, then rejoin voice."
 )
 
+# Worker code version, logged once per session. If voice misbehaves, check
+# `docker logs livekit-agent` for this line: v1 workers speak NO_KEY_MESSAGE
+# on every turn (the old loop); v2 workers run the Groq → NVIDIA chain.
+VOICE_WORKER_VERSION = "v2-groq-nvidia-fallback"
+
 # Spoken only when NEITHER Groq nor NVIDIA keys are available. Kept short
 # and conversational (not a dead-end loop): the turn still ends so the user
 # can ask the next question.
