@@ -32,6 +32,7 @@ export default function ProfileApiKeysPage() {
   const [provider, setProvider] = useState<"nvidia" | "openai" | "gemini" | "groq" | "ollama" | "mock">(
     "nvidia"
   );
+  const [apiKeyInput, setApiKeyInput] = useState("");
   const [model, setModel] = useState<string>("nvidia/nemotron-3.5-lightning-30b-a3b");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -115,6 +116,7 @@ export default function ProfileApiKeysPage() {
           }),
         });
         setSuccess(`API key for ${providerName} added successfully!`);
+        setApiKeyInput("");
         void load();
       } catch (e: any) {
         setError(e.response?.detail || "Failed to add API key. Please try again.");
@@ -122,7 +124,7 @@ export default function ProfileApiKeysPage() {
         setLoading(false);
       }
     },
-    []
+    [load]
   );
 
   const handleRemoveKey = useCallback(
@@ -141,7 +143,7 @@ export default function ProfileApiKeysPage() {
         setLoading(false);
       }
     },
-    []
+    [load]
   );
 
   const handleConnectTelegram = useCallback(async () => {
@@ -279,22 +281,23 @@ export default function ProfileApiKeysPage() {
               required
               className="w-full"
               disabled={loading}
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
             />
           </div>
 
           <div className="flex gap-2 mt-4">
             <Button
-              disabled={loading}
-              type="submit"
-              onClick={() => {}}
+              disabled={loading || !apiKeyInput.trim()}
+              onClick={() => handleAddKey(provider, apiKeyInput)}
             >
               Add Key
             </Button>
             <Button
               type="button"
-              onClick={() => {}}
+              onClick={() => setApiKeyInput("")}
               variant="outline"
-              disabled={loading}
+              disabled={loading || !apiKeyInput}
             >
               Cancel
             </Button>
@@ -337,8 +340,8 @@ export default function ProfileApiKeysPage() {
                     <Button
                       size="icon"
                         variant="ghost"
-                        onClick={() => {}}
-                        aria-label="Configure"
+                        onClick={() => handleRemoveKey(key.provider)}
+                        aria-label="Remove"
                     >
                       ⚙️
                     </Button>
@@ -347,8 +350,8 @@ export default function ProfileApiKeysPage() {
                     <Button
                       size="icon"
                         variant="ghost"
-                        onClick={() => {}}
-                        aria-label="Reactivate"
+                        onClick={() => handleRemoveKey(key.provider)}
+                        aria-label="Remove"
                       >
                         ⏳
                     </Button>
