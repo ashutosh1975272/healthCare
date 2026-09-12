@@ -1,8 +1,8 @@
 # VPS production stack for Aarogya (single host, Docker Compose).
-# Usage: docker compose -f docker-compose.vps.yml [--profile web] up -d --build
-# Managed data plane (Neon Postgres + Upstash Redis) comes from .env.vps.
-# Local-only services from docker-compose.yml (postgres, redis, mailhog)
-# are intentionally NOT part of this file.
+# Usage: docker compose -f docker-compose.vps.yml up -d --build
+# Managed data plane (Neon Postgres + Upstash Redis) comes from .env.vps
+# (copy .env.vps.example and fill in values; never commit it).
+# Local testing uses docker-compose.local-online.yml + npm run dev instead.
 
 services:
   minio:
@@ -59,6 +59,9 @@ services:
       MINIO_SECURE: "false"
       APP_ENV: production
       OTP_DEV_MODE: "false"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
       interval: 10s
@@ -79,6 +82,9 @@ services:
       - .env.vps
     environment:
       APP_ENV: production
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     depends_on:
       api:
         condition: service_healthy
@@ -96,6 +102,9 @@ services:
       - .env.vps
     environment:
       APP_ENV: production
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     depends_on:
       - celery
     mem_limit: 256m
@@ -111,6 +120,9 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env.vps
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     expose:
       - "7860"
     healthcheck:
@@ -126,17 +138,41 @@ services:
 
   # Manual HTTPS only (port 80 is taken on this host).
   # Certs are issued by certbot on the host and mounted read-only below.
-  # Telegram webhooks and the Vercel BFF both require HTTPS, but accept
-  # any valid port — here we bind the host's free 20354 range.
+  # Telegram webhooks and the Vercel BFF both require HTTPS: the API is
+  # served on ${HTTPS_PORT} (20354) and Telegram's allowed port 8443.
   caddy:
     image: caddy:2-alpine
+    env_file:
+      - .env.vps
     ports:
       - "${HTTPS_PORT:-20354}:443"
+      - "8443:443"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ${AAROGYA_CERTS_DIR:-~/aarogya-certs}:/certs:ro
       - caddy_data:/data
       - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - aarogya
+
+  # Self-hosted frontend mirror (Vercel is the primary UI).
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+    env_file:
+      - .env.vps
+    environment:
+      API_INTERNAL_URL: http://api:8000
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+    ports:
+      - "20356:3000"
     depends_on:
       api:
         condition: service_healthy
