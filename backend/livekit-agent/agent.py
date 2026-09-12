@@ -142,9 +142,9 @@ _GroqChatStream = _VoiceChatStream
 
 
 async def entrypoint(ctx: JobContext):
+    logger.info(f"voice-worker {VOICE_WORKER_VERSION} (Groq first, NVIDIA fallback)")
     participant = await ctx.wait_for_participant()
     logger.info(f"Participant joined: {participant.identity}")
-    logger.info(f"voice-worker {VOICE_WORKER_VERSION} (Groq first, NVIDIA fallback)")
 
     database_url = os.environ.get("DATABASE_URL", "")
     secret_key = os.environ.get("SECRET_KEY", "")
