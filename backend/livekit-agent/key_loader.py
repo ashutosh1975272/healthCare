@@ -64,7 +64,7 @@ async def load_user_groq_key(database_url: str, secret_key: str, user_id: str) -
                         "WHERE user_id = :user_id AND provider = 'groq' "
                         "AND is_active = true LIMIT 1"
                     ),
-                    {"user_id": str(uid)},
+                    {"user_id": uid},
                 )
                 row = result.first()
         finally:
