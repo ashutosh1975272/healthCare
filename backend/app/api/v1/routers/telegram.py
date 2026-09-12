@@ -60,6 +60,19 @@ async def telegram_call(token: str, method: str, payload: dict[str, Any] | None 
             response = await client.post(f"{TELEGRAM_API}/bot{token}/{method}", json=payload or {})
             response.raise_for_status()
             result = response.json()
+    except httpx.HTTPStatusError as exc:
+        # Telegram answered (e.g. 401 Unauthorized = bad token): caller's
+        # problem, not an outage. Surface Telegram's own description.
+        if exc.response is not None and exc.response.status_code in (401, 403, 404):
+            try:
+                detail = exc.response.json().get("description", "")
+            except ValueError:
+                detail = ""
+            raise HTTPException(
+                status_code=400,
+                detail=detail or "Telegram rejected the bot token. Check it in @BotFather.",
+            ) from exc
+        raise HTTPException(status_code=502, detail="Telegram API is unavailable.") from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(status_code=502, detail="Telegram API is unavailable.") from exc
     if not result.get("ok"):
