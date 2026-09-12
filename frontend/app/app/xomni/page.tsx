@@ -9,7 +9,8 @@ import {
   Utensils, Clock, Activity, FileText, Sparkles, X, Volume2, MicOff, Search,
   MoreHorizontal, Link2, Download, History, BrainCircuit, ActivitySquare, TriangleAlert
 } from "lucide-react";
-import { apiClient, getAccessToken, setAccessToken } from "@/lib/auth-client";
+import { apiClient, refreshAccessToken } from "@/lib/api";
+import { getAccessToken, setAccessToken } from "@/lib/auth-client";
 import { VoiceTalkButton } from "@/components/app/voice-talk-button";
 import { MarkdownMessage } from "@/components/app/markdown-message";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -141,14 +142,12 @@ export default function XomniPage() {
   }, [searchParams]);
 
   const loadConversations = async () => {
-    const token = getAccessToken();
     try {
-      const res = await fetch("/api/v1/xomni/conversations", {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        credentials: "include",
+      const { data, error } = await apiClient<Conversation[]>("/api/v1/xomni/conversations", {
+        method: "GET",
+        retryOnAuthError: true,
       });
-      if (res.ok) {
-        const data = await res.json() as Conversation[];
+      if (!error && data) {
         setConversations(data);
       }
     } catch { /* silent */ }
@@ -198,16 +197,17 @@ export default function XomniPage() {
       setLoading(true);
       setError(null);
 
-      const token = getAccessToken();
-      let fullText = "";
+      const buildHeaders = (token?: string | null) => {
+        const h = new Headers();
+        h.set("Content-Type", "application/json");
+        if (token) h.set("Authorization", `Bearer ${token}`);
+        return h;
+      };
 
-      try {
+      const attemptSend = async (token?: string | null) => {
         const res = await fetch("/api/v1/xomni/chat", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
+          headers: buildHeaders(token),
           credentials: "include",
           body: JSON.stringify({
             message: content,
@@ -219,11 +219,25 @@ export default function XomniPage() {
           }),
         });
 
+        if (res.status === 401 && !token) {
+          const newToken = await refreshAccessToken();
+          if (newToken) {
+            return attemptSend(newToken);
+          }
+        }
+
         if (!res.ok) {
           const txt = await res.text();
           throw new Error(txt || `Error ${res.status}`);
         }
 
+        return res;
+      };
+
+      let fullText = "";
+
+      try {
+        const res = await attemptSend(getAccessToken());
         const reader = res.body?.getReader();
         const decoder = new TextDecoder();
         if (!reader) throw new Error("No response stream");
@@ -319,7 +333,7 @@ export default function XomniPage() {
         setLoading(false);
       }
     },
-    [loading, mode, activeConvId, contextMemberId, contextDocumentId, ttsEnabled, voiceRoomActive]
+    [loading, mode, activeConvId, contextMemberId, contextDocumentId, ttsEnabled, voiceRoomActive, loadConversations, speak]
   );
 
   // ── Live voice-room transcript → same send path as typed input ──────────
@@ -337,14 +351,12 @@ export default function XomniPage() {
   // ── Load conversation messages ──────────────────────────────────────────
   const loadConversation = async (convId: string) => {
     setActiveConvId(convId);
-    const token = getAccessToken();
     try {
-      const res = await fetch(`/api/v1/xomni/conversations/${convId}/messages`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        credentials: "include",
-      });
-      if (res.ok) {
-        const data = await res.json() as Array<{ id: string; role: string; content: string; created_at: string }>;
+      const { data, error } = await apiClient<Array<{ id: string; role: string; content: string; created_at: string }>>(
+        `/api/v1/xomni/conversations/${convId}/messages`,
+        { method: "GET", retryOnAuthError: true }
+      );
+      if (!error && data) {
         setMessages(data.map((m) => ({
           id: m.id,
           role: m.role as Role,
@@ -570,19 +582,14 @@ export default function XomniPage() {
                             <ProposalCard
                               action={message.action}
                               onAccept={async (edited) => {
-                                const token = getAccessToken();
                                 if (!activeConvId) throw new Error("This proposal is no longer attached to a conversation.");
-                                const response = await fetch("/api/v1/xomni/actions/confirm", {
+                                const { data, error } = await apiClient<ConfirmResult>("/api/v1/xomni/actions/confirm", {
                                   method: "POST",
-                                  headers: {
-                                    "Content-Type": "application/json",
-                                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                                  },
-                                  credentials: "include",
                                   body: JSON.stringify({ conversation_id: activeConvId, edited_action: edited }),
+                                  retryOnAuthError: true,
                                 });
-                                if (!response.ok) throw new Error((await response.text()) || "Could not apply proposal.");
-                                const result = (await response.json()) as ConfirmResult;
+                                if (error) throw new Error(error.detail || "Could not apply proposal.");
+                                const result = data as ConfirmResult;
                                 await loadConversation(activeConvId);
                                 await loadConversations();
                                 window.dispatchEvent(new CustomEvent("aarogya:data-changed", {
@@ -591,17 +598,14 @@ export default function XomniPage() {
                                 return result;
                               }}
                               onReject={async () => {
-                                if (activeConvId) {
-                                  const token = getAccessToken();
-                                  await fetch("/api/v1/xomni/actions/reject", {
-                                    method: "POST",
-                                    headers: {
-                                      "Content-Type": "application/json",
-                                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                                    },
-                                    credentials: "include",
-                                    body: JSON.stringify({ conversation_id: activeConvId }),
-                                  });
+                                if (!activeConvId) return;
+                                const { error } = await apiClient<{ rejected?: boolean }>("/api/v1/xomni/actions/reject", {
+                                  method: "POST",
+                                  body: JSON.stringify({ conversation_id: activeConvId }),
+                                  retryOnAuthError: true,
+                                });
+                                if (error) {
+                                  console.error("Reject failed", error);
                                 }
                               }}
                             />

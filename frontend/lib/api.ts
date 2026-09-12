@@ -1,12 +1,19 @@
 import type { NextRequest } from "next/server";
+import { setAccessToken, getAccessToken } from "@/lib/auth-client";
 
 const API_BASE = process.env.API_INTERNAL_URL || "http://localhost:8000";
 
-/** Rewrite FastAPI refresh cookie so browsers send it on all routes (for middleware + BFF). */
+export type ApiProblem = {
+  code?: string;
+  detail?: string;
+  title?: string;
+  status?: number;
+  message?: string;
+};
+
 export function rewriteUpstreamCookies(setCookieHeaders: string[]): string[] {
   return setCookieHeaders.map((cookie) =>
     cookie
-      // Path=/ so /app middleware can see refresh; value stays httpOnly.
       .replace(/Path=\/api\/v1\/auth/gi, "Path=/")
       .replace(/Domain=[^;]+;?\s*/gi, ""),
   );
@@ -53,14 +60,6 @@ export function cookieHeaderFromRequest(req: NextRequest): string {
   return req.headers.get("cookie") || "";
 }
 
-export type ApiProblem = {
-  code?: string;
-  detail?: string;
-  title?: string;
-  status?: number;
-  message?: string;
-};
-
 export async function parseApiJson<T>(res: Response): Promise<{ data?: T; error?: ApiProblem }> {
   const text = await res.text();
   let json: unknown = null;
@@ -90,4 +89,92 @@ export function accessCookie(value: string, maxAge = 900): string {
 export function clearAccessCookie(): string {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
   return `aarogya_access=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
+}
+
+export async function refreshAccessToken(): Promise<string | null> {
+  try {
+    const res = await fetch("/api/v1/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({}),
+      cache: "no-store",
+    });
+    const text = await res.text();
+    let json: unknown = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      return null;
+    }
+    if (!res.ok) return null;
+    const data = json as { access_token?: string } | null;
+    const token = data?.access_token;
+    if (token) {
+      setAccessToken(token);
+      return token;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function apiClient<T>(
+  path: string,
+  init: RequestInit & { retryOnAuthError?: boolean } = {},
+): Promise<{ data?: T; error?: ApiProblem }> {
+  const retryOnAuthError = init.retryOnAuthError !== false;
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const token = getAccessToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const res = await fetch(path, { ...init, headers, credentials: "include" });
+  const text = await res.text();
+  let json: unknown = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    return { error: { detail: "Unexpected response.", status: res.status } };
+  }
+  if (!res.ok) {
+    const err = (json as { detail?: string; code?: string }) || {};
+    const problem = {
+      detail: err.detail || "Request failed",
+      status: res.status,
+      code: err.code,
+    };
+    if (res.status === 401 && retryOnAuthError) {
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        headers.set("Authorization", `Bearer ${newToken}`);
+        const retry = await fetch(path, { ...init, headers, credentials: "include" });
+        const retryText = await retry.text();
+        let retryJson: unknown = null;
+        try {
+          retryJson = retryText ? JSON.parse(retryText) : null;
+        } catch {
+          return { error: { detail: "Unexpected response.", status: retry.status } };
+        }
+        if (retry.ok) {
+          return { data: retryJson as T };
+        }
+        const retryErr = (retryJson as { detail?: string; code?: string }) || {};
+        return {
+          error: {
+            detail: retryErr.detail || problem.detail,
+            status: retry.status,
+            code: retryErr.code || problem.code,
+          },
+        };
+      }
+    }
+    return { error: problem };
+  }
+  return { data: json as T };
 }

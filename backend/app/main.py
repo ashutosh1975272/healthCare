@@ -28,6 +28,8 @@ app = FastAPI(title="Aarogya API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://health-care-3v73i1jsf-ashutoshteams.vercel.app",
+        "https://health-care-owjk2dbg8-ashutoshteams.vercel.app",
         "https://health-care-xi-rust.vercel.app",
         "https://aarogya-health-ak123456789.duckdns.org:20354",
     ],

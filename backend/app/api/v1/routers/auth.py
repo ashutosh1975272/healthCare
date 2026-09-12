@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Cookie, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.cookies import REFRESH_COOKIE, clear_refresh_cookie, set_refresh_cookie
+from app.core.cookies import REFRESH_COOKIE, ACCESS_COOKIE, clear_refresh_cookie, clear_access_cookie, set_access_cookie, set_refresh_cookie
 from app.core.deps import get_current_user
 from app.core.errors import AppError
 from app.core.ratelimit import check_rate_limit
@@ -58,6 +58,7 @@ async def verify_registration(
     await check_rate_limit(f"auth:verify:email:{payload.email.lower()}", limit=10, window_seconds=3600)
     result, refresh = await auth_service.verify_registration(db, payload.email, payload.code)
     set_refresh_cookie(response, refresh)
+    set_access_cookie(response, result.tokens.access_token)
     return result
 
 
@@ -76,6 +77,8 @@ async def login(
     )
     if refresh:
         set_refresh_cookie(response, refresh)
+    if result.tokens and result.tokens.access_token:
+        set_access_cookie(response, result.tokens.access_token)
     return result
 
 
@@ -91,6 +94,7 @@ async def refresh(
         raise AppError(code="AUTH_TOKEN_INVALID", status=401, detail="Refresh token required.")
     tokens, new_refresh = await auth_service.refresh(db, token)
     set_refresh_cookie(response, new_refresh)
+    set_access_cookie(response, tokens.access_token)
     return tokens
 
 
@@ -104,6 +108,7 @@ async def logout(
     token = (payload.refresh_token if payload else None) or aarogya_refresh
     await auth_service.logout(db, token)
     clear_refresh_cookie(response)
+    clear_access_cookie(response)
     return MessageResponse(message="Signed out.")
 
 
@@ -115,6 +120,7 @@ async def logout_all(
 ) -> MessageResponse:
     await auth_service.logout_all(db, current_user)
     clear_refresh_cookie(response)
+    clear_access_cookie(response)
     return MessageResponse(message="All sessions revoked.")
 
 
