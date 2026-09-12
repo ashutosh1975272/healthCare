@@ -75,6 +75,11 @@ async def telegram_call(token: str, method: str, payload: dict[str, Any] | None 
                 status_code=400,
                 detail=detail or "Telegram rejected the bot token. Check it in @BotFather.",
             ) from exc
+        if exc.response is not None and exc.response.status_code == 429:
+            raise HTTPException(
+                status_code=429,
+                detail="Telegram is rate-limiting right now. Wait a minute and try again.",
+            ) from exc
         raise HTTPException(status_code=502, detail="Telegram API is unavailable.") from exc
     except (httpx.HTTPError, ValueError) as exc:
         log.warning("telegram_call %s failed: %s", method, type(exc).__name__)
