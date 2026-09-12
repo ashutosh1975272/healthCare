@@ -1,8 +1,8 @@
-"""Per-user Groq chat-completions client for the LiveKit voice worker.
+"""Voice LLM chain for the LiveKit worker: Groq first, NVIDIA fallback.
 
-Uses the user's own Groq API key (loaded via :mod:`key_loader`) against
-``https://api.groq.com/openai/v1/chat/completions`` — mirroring the
-headers/body built by ``app.ai.gateway._call_groq``.
+Uses the user's own keys (loaded via :mod:`key_loader`, DB then shared
+server env) against Groq chat-completions, falling back to NVIDIA NIM —
+mirroring the headers/body built by ``app.ai.gateway``.
 
 Replies are tuned for speech: short, plain-text, no markdown or lists.
 """
@@ -23,11 +23,24 @@ NO_KEY_MESSAGE: str = (
     "Please add your Groq API key in Profile, AI Provider Keys, then rejoin voice."
 )
 
+# Spoken only when NEITHER Groq nor NVIDIA keys are available. Kept short
+# and conversational (not a dead-end loop): the turn still ends so the user
+# can ask the next question.
+LIMITED_MODE_MESSAGE: str = (
+    "I'm on limited voice mode right now without an AI key, so I can't give "
+    "a full answer. For better voice answers, add your Groq API key in "
+    "Profile, A I Provider Keys, then rejoin voice."
+)
+
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "groq/compound"]
 
+NVIDIA_CHAT_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+NVIDIA_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+
 # Single attempt budget so one slow model cannot stall a realtime turn.
 REQUEST_TIMEOUT = 15.0
+NVIDIA_TIMEOUT = 60.0
 MAX_TOKENS = 300
 
 
@@ -37,6 +50,50 @@ class GroqKeyInvalid(Exception):
 
 class GroqUnavailable(Exception):
     """Groq request failed (network error, 4xx/5xx on all models, bad payload)."""
+
+
+class NvidiaUnavailable(Exception):
+    """NVIDIA request failed (network error, non-2xx, bad payload)."""
+
+
+class UserNvidiaLLM:
+    """Non-streaming NVIDIA chat client (voice fallback when Groq fails)."""
+
+    def __init__(self, api_key: str) -> None:
+        self._api_key = api_key
+
+    async def chat(self, messages: list[dict], system: str) -> str:
+        import httpx
+
+        history = [{"role": "system", "content": system}] + list(messages)
+        async with httpx.AsyncClient(timeout=NVIDIA_TIMEOUT) as client:
+            try:
+                resp = await client.post(
+                    NVIDIA_CHAT_URL,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json={
+                        "model": NVIDIA_MODEL,
+                        "messages": history,
+                        "temperature": 0.7,
+                        "max_tokens": MAX_TOKENS,
+                    },
+                )
+            except Exception as exc:
+                raise NvidiaUnavailable(str(exc)) from exc
+            if resp.status_code == 401:
+                raise GroqKeyInvalid("NVIDIA API key rejected (401).")
+            if 400 <= resp.status_code < 600:
+                raise NvidiaUnavailable(f"NVIDIA HTTP {resp.status_code}")
+            try:
+                data = resp.json()
+                choices = data.get("choices", [])
+                text = choices[0].get("message", {}).get("content", "") if choices else ""
+            except Exception as exc:
+                raise NvidiaUnavailable(f"Bad NVIDIA payload: {exc}") from exc
+        text = (text or "").strip()
+        if not text:
+            raise NvidiaUnavailable("Empty response from NVIDIA.")
+        return text
 
 
 class UserGroqLLM:

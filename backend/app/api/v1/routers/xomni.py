@@ -297,12 +297,21 @@ async def livekit_token(
     import os
     livekit_url = os.environ.get("LIVEKIT_URL", "")
 
+    # Voice capability flags (additive; existing clients ignore them).
+    # Mirrors the worker chain: Groq first, NVIDIA fallback, else limited.
+    has_groq = bool(await gateway._get_key("groq"))
+    has_nvidia = bool(await gateway._get_key("nvidia"))
+    voice_mode = "full" if (has_groq or has_nvidia) else "limited"
+
     return {
         "token": token,
         "room_name": room,
         "livekit_url": livekit_url,
         "participant_identity": identity,
         "context": context_val,
+        "has_groq_key": has_groq,
+        "has_nvidia_key": has_nvidia,
+        "voice_mode": voice_mode,
     }
 
 
