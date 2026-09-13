@@ -38,10 +38,26 @@ LIMITED_MODE_MESSAGE: str = (
 )
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "groq/compound"]
+# Comma-separated list so you can change voice models from .env without
+# touching code. Falls back to the verified Groq models (gpt-oss-120b etc.).
+def _groq_models_from_env() -> list[str]:
+    import os
+    raw = os.environ.get("GROQ_VOICE_MODELS", "").strip() or os.environ.get("GROQ_MODELS", "").strip()
+    if raw:
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if parts:
+            return parts
+    return ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "groq/compound"]
+
+GROQ_MODELS = _groq_models_from_env()
 
 NVIDIA_CHAT_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-NVIDIA_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+# Keep in sync with gateway NVIDIA_MODEL env. Single model for voice fallback.
+def _nvidia_model_from_env() -> str:
+    import os
+    return os.environ.get("NVIDIA_MODEL", "").strip() or "nvidia/llama-3.1-nemotron-70b-instruct"
+
+NVIDIA_MODEL = _nvidia_model_from_env()
 
 # Single attempt budget so one slow model cannot stall a realtime turn.
 REQUEST_TIMEOUT = 15.0

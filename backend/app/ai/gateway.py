@@ -29,17 +29,24 @@ class Provider(str, Enum):
     MOCK = "mock"
 
 
-# Default models per provider
+# Models come from .env so you can swap without a code change.
+# Every value here has a safe fallback (the model verified working today:
+# Groq gpt-oss-120b, STT whisper-large-v3-turbo). Keys still come from
+# the user's Profile > AI Provider Keys (DB) with env as server fallback.
+def _env_model(name: str, fallback: str) -> str:
+    v = os.environ.get(name, "").strip()
+    return v if v else fallback
+
 DEFAULT_MODELS = {
-    Provider.NVIDIA: "nvidia/nemotron-3.5-lightning-30b-a3b",
-    Provider.GROQ:   "openai/gpt-oss-120b",   # fastest streaming model
-    Provider.OPENAI: "gpt-4o-mini",
-    Provider.GEMINI: "gemini-1.5-flash",
-    Provider.OLLAMA: "llama3",
+    Provider.NVIDIA: _env_model("NVIDIA_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct"),
+    Provider.GROQ:   _env_model("GROQ_MODEL", "openai/gpt-oss-120b"),
+    Provider.OPENAI: _env_model("OPENAI_MODEL", "gpt-4o-mini"),
+    Provider.GEMINI: _env_model("GEMINI_MODEL", "gemini-1.5-flash"),
+    Provider.OLLAMA: _env_model("OLLAMA_MODEL", "llama3"),
     Provider.MOCK:   "mock-model",
 }
 
-GROQ_STT_MODEL = "whisper-large-v3-turbo"  # best speed/accuracy ratio
+GROQ_STT_MODEL = _env_model("GROQ_STT_MODEL", "whisper-large-v3-turbo")
 
 
 class LLMResponse:
@@ -64,12 +71,15 @@ class LLMResponse:
 
 
 class LLMGateway:
-    """Routes LLM calls: NVIDIA for chat, Groq for streaming + STT."""
+    """Routes LLM calls: Groq primary (fast, reliable) → NVIDIA → others."""
 
-    # Primary: NVIDIA → Groq (streaming) → OpenAI → Gemini → Mock
+    # Groq is primary now: your Groq key is verified working (200), while
+    # NVIDIA chat completions return 403 for the current key on all models.
+    # Keeping the chain here guarantees Groq is tried first; NVIDIA remains
+    # as a fallback if Groq ever fails.
     FALLBACK_CHAIN = [
-        Provider.NVIDIA,
         Provider.GROQ,
+        Provider.NVIDIA,
         Provider.OPENAI,
         Provider.GEMINI,
         Provider.OLLAMA,
@@ -110,7 +120,7 @@ class LLMGateway:
 
     async def _get_active_provider(self) -> Provider:
         """Return the best available provider based on configured keys."""
-        for p in [Provider.NVIDIA, Provider.GROQ, Provider.OPENAI, Provider.GEMINI]:
+        for p in [Provider.GROQ, Provider.NVIDIA, Provider.OPENAI, Provider.GEMINI]:
             key = await self._get_key(p.value)
             if key:
                 return p
