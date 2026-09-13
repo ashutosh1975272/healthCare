@@ -25,8 +25,9 @@ NO_KEY_MESSAGE: str = (
 
 # Worker code version, logged once per session. If voice misbehaves, check
 # `docker logs livekit-agent` for this line: v1 workers speak NO_KEY_MESSAGE
-# on every turn (the old loop); v2 workers run the Groq → NVIDIA chain.
-VOICE_WORKER_VERSION = "v2-groq-nvidia-fallback"
+# on every turn (the old loop); v2 workers run the Groq → NVIDIA chain;
+# v3 puts free LiveKit STT/TTS first.
+VOICE_WORKER_VERSION = "v3-free-stt-tts-groq-nvidia"
 
 # Spoken only when NEITHER Groq nor NVIDIA keys are available. Kept short
 # and conversational (not a dead-end loop): the turn still ends so the user

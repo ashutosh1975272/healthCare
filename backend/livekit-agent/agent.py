@@ -182,20 +182,40 @@ async def entrypoint(ctx: JobContext):
         logger.warning("BVC noise cancellation unavailable; continuing without it.")
         audio_input = room_io.AudioInputOptions()
 
+    # STT/TTS: env-driven, free LiveKit models first. Comma-separated list
+    # so you can swap without code. Default puts a free model at priority 0
+    # (openai/* is free via LiveKit Cloud inference); Deepgram/Cartesia
+    # stay as quality fallbacks. Change via LIVEKIT_STT_MODELS / LIVEKIT_TTS_MODELS.
+    def _stt_models() -> list:
+        raw = os.environ.get("LIVEKIT_STT_MODELS", "").strip() or os.environ.get("LIVEKIT_STT_MODEL", "").strip()
+        ids = [s.strip() for s in raw.split(",") if s.strip()] if raw else []
+        if not ids:
+            ids = ["openai/whisper", "deepgram/nova-2"]
+        out = []
+        for mid in ids:
+            try:
+                out.append(inference.STT.from_model_string(mid))
+            except Exception:
+                logger.warning("STT model %s unavailable, skipping", mid)
+        return out or [inference.STT.from_model_string("deepgram/nova-2")]
+
+    def _tts_models() -> list:
+        raw = os.environ.get("LIVEKIT_TTS_MODELS", "").strip() or os.environ.get("LIVEKIT_TTS_MODEL", "").strip()
+        ids = [s.strip() for s in raw.split(",") if s.strip()] if raw else []
+        if not ids:
+            ids = ["openai/tts-1", "cartesia/sonic-2"]
+        out = []
+        for mid in ids:
+            try:
+                out.append(inference.TTS.from_model_string(mid))
+            except Exception:
+                logger.warning("TTS model %s unavailable, skipping", mid)
+        return out or [inference.TTS.from_model_string("cartesia/sonic-2")]
+
     session = AgentSession(
-        stt=stt.FallbackAdapter(
-            [
-                inference.STT.from_model_string("deepgram/nova-3"),
-                inference.STT.from_model_string("deepgram/nova-2"),
-            ]
-        ),
+        stt=stt.FallbackAdapter(_stt_models()),
         llm=UserGroqVoiceLLM(groq_key, nvidia_key=nvidia_key),
-        tts=tts.FallbackAdapter(
-            [
-                inference.TTS.from_model_string("cartesia/sonic-3"),
-                inference.TTS.from_model_string("cartesia/sonic-2"),
-            ]
-        ),
+        tts=tts.FallbackAdapter(_tts_models()),
         vad=silero.VAD.load(
             min_silence_duration=0.5,
             prefix_padding_duration=0.3,
