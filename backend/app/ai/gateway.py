@@ -26,6 +26,7 @@ class Provider(str, Enum):
     OPENAI = "openai"
     GEMINI = "gemini"
     OLLAMA = "ollama"
+    VERCEL = "vercel"
     MOCK = "mock"
 
 
@@ -43,6 +44,7 @@ DEFAULT_MODELS = {
     Provider.OPENAI: _env_model("OPENAI_MODEL", "gpt-4o-mini"),
     Provider.GEMINI: _env_model("GEMINI_MODEL", "gemini-1.5-flash"),
     Provider.OLLAMA: _env_model("OLLAMA_MODEL", "llama3"),
+    Provider.VERCEL: _env_model("VERCEL_AI_GATEWAY_MODEL", "alibaba/qwen-3-14b"),
     Provider.MOCK:   "mock-model",
 }
 
@@ -75,11 +77,11 @@ class LLMGateway:
 
     # Groq is primary now: your Groq key is verified working (200), while
     # NVIDIA chat completions return 403 for the current key on all models.
-    # Keeping the chain here guarantees Groq is tried first; NVIDIA remains
-    # as a fallback if Groq ever fails.
+    # Vercel AI Gateway (vck_...) is the next free fallback before OpenAI.
     FALLBACK_CHAIN = [
         Provider.GROQ,
         Provider.NVIDIA,
+        Provider.VERCEL,
         Provider.OPENAI,
         Provider.GEMINI,
         Provider.OLLAMA,
@@ -111,6 +113,7 @@ class LLMGateway:
             "groq": ["GROQ_API_KEY"],
             "openai": ["OPENAI_API_KEY"],
             "gemini": ["GEMINI_API_KEY"],
+            "vercel": ["VERCEL_AI_GATEWAY_API_KEY", "AI_GATEWAY_API_KEY"],
         }
         for env_var in env_map.get(provider, []):
             val = os.environ.get(env_var, "")
@@ -120,7 +123,7 @@ class LLMGateway:
 
     async def _get_active_provider(self) -> Provider:
         """Return the best available provider based on configured keys."""
-        for p in [Provider.GROQ, Provider.NVIDIA, Provider.OPENAI, Provider.GEMINI]:
+        for p in [Provider.GROQ, Provider.NVIDIA, Provider.VERCEL, Provider.OPENAI, Provider.GEMINI]:
             key = await self._get_key(p.value)
             if key:
                 return p
@@ -390,6 +393,9 @@ class LLMGateway:
         elif provider == Provider.OLLAMA:
             return await self._call_ollama(prompt, model=m, temperature=temperature,
                                             max_tokens=max_tokens)
+        elif provider == Provider.VERCEL:
+            return await self._call_vercel(prompt, model=m, temperature=temperature,
+                                            max_tokens=max_tokens, system_prompt=system_prompt)
         else:
             return await self._call_mock(prompt)
 
@@ -569,6 +575,41 @@ class LLMGateway:
             text=data.get("response", "") or "",
             model=data.get("model", model),
             provider=Provider.OLLAMA,
+        )
+
+    async def _call_vercel(
+        self, prompt: str, *, model: str, temperature: float,
+        max_tokens: int | None, system_prompt: str | None = None
+    ) -> LLMResponse:
+        api_key = await self._get_key("vercel")
+        if not api_key:
+            raise ValueError("Vercel AI Gateway key not configured.")
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                "https://ai-gateway.vercel.sh/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        choices = data.get("choices", [])
+        text = choices[0].get("message", {}).get("content", "") if choices else ""
+        return LLMResponse(
+            text=text or "",
+            model=data.get("model", model),
+            provider=Provider.VERCEL,
+            usage=data.get("usage", {}),
         )
 
     async def _call_mock(self, prompt: str) -> LLMResponse:
